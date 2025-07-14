@@ -11,14 +11,7 @@ const app = express();
 // Configuración de CORS
 app.use(cors({
   origin: [
-    'http://localhost:3000', 
-    'http://127.0.0.1:3000',
-    'http://localhost:8081',
-    'http://127.0.0.1:8081',
-    'http://localhost:19006',
-    'http://192.168.1.66:8081',
-    'http://10.13.8.70:8081',
-    'https://nutweb.onrender.com'  // <--- agrega tu dominio de Render
+    '*'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
@@ -1308,6 +1301,17 @@ app.post('/api/iot/scale/calibrate', (req, res) => {
 // =============================================================================
 // ENDPOINTS DE AUTENTICACIÓN
 // =============================================================================
+
+app.get('/api/mysql-test', async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT NOW() AS now');
+    res.json({ success: true, now: rows[0].now });
+  } catch (err) {
+    console.error('❌ Error conexión MySQL:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 app.post('/api/login', async (req, res) => {
   try {
