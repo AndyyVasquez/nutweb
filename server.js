@@ -17,7 +17,8 @@ app.use(cors({
     'http://127.0.0.1:8081',
     'http://localhost:19006',
     'http://192.168.1.66:8081',
-    'http://10.13.8.70:8081'
+    'http://10.13.8.70:8081',
+    'https://nutweb.onrender.com'  // <--- agrega tu dominio de Render
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
@@ -33,17 +34,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// Configuración de base de datos
+// Configuración de base de datos MySQL desde .env
 const dbConfig = {
-  host: 'localhost',
-  user: 'root',
-  password: 'andyy2102',
-  database: 'nutralis'
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME
 };
 
-// Configuración MongoDB
-const mongoUrl = 'mongodb://localhost:27017';
-const mongoDbName = 'nutralisN';
+// Configuración MongoDB Atlas desde .env
+const mongoUrl = process.env.MONGO_URI;
+const mongoDbName = process.env.MONGO_DB;
 
 // Pool de conexiones MySQL
 const pool = mysql.createPool(dbConfig);
@@ -52,20 +53,24 @@ const pool = mysql.createPool(dbConfig);
 let mongoClient;
 let mongoDB;
 
-// Conectar MongoDB
+// Conectar a MongoDB
 const connectMongo = async () => {
   try {
-    mongoClient = new MongoClient(mongoUrl);
+    mongoClient = new MongoClient(mongoUrl, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true
+    });
     await mongoClient.connect();
     mongoDB = mongoClient.db(mongoDbName);
-    console.log('✅ Conectado a MongoDB');
+    console.log('✅ Conectado a MongoDB Atlas');
   } catch (error) {
-    console.error('❌ Error conectando MongoDB:', error);
+    console.error('❌ Error conectando a MongoDB:', error);
   }
 };
 
 // Inicializar MongoDB
 connectMongo();
+
 
 // =============================================================================
 // CONFIGURACIÓN IOT - BÁSCULA INTELIGENTE Y PODÓMETRO
