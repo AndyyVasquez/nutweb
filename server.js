@@ -83,11 +83,13 @@ app.post('/api/mercadopago/create-preference', async (req, res) => {
         email: user_email,
         ...(user_id && { external_reference: user_id.toString() })
       },
-      back_urls: {
-        success: 'https://integradora1.com/payment/success',
-        failure: 'https://integradora1.com/payment/failure',
-        pending: 'https://integradora1.com/payment/pending'
-      },
+     // Cambiar las back_urls del Preference de Mercado Pago
+back_urls: {
+  success: 'https://nutweb.onrender.com/payment/success',
+  failure: 'https://nutweb.onrender.com/payment/failure',
+  pending: 'https://nutweb.onrender.com/payment/pending'
+},
+
       auto_return: 'approved',
       external_reference: JSON.stringify({
         user_id: user_id,
