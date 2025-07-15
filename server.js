@@ -129,7 +129,6 @@ back_urls: {
 
 // Agregar estas rutas a tu servidor en nutweb.onrender.com
 
-// GET /payment/success - Pago exitoso
 app.get('/payment/success', async (req, res) => {
   try {
     const {
@@ -159,7 +158,9 @@ app.get('/payment/success', async (req, res) => {
 
     const { user_id, plan_type } = referenceData;
 
-    // Actualizar base de datos si tenemos user_id
+    let subscriptionToken = null;
+
+    // Actualizar base de datos y generar token si tenemos user_id
     if (user_id && status === 'approved') {
       try {
         const connection = await mysql.createConnection(dbConfig);
@@ -172,6 +173,12 @@ app.get('/payment/success', async (req, res) => {
         `;
         
         await connection.execute(updateQuery, [user_id]);
+        
+        // Generar token de suscripción
+        subscriptionToken = generateSubscriptionToken(user_id, plan_type, payment_id);
+        
+        // Guardar token en BD
+        await saveSubscriptionToken(user_id, subscriptionToken, payment_id, plan_type);
         
         // Registrar el pago si tienes la tabla
         try {
@@ -188,12 +195,13 @@ app.get('/payment/success', async (req, res) => {
         await connection.end();
         
         console.log(`✅ Acceso activado para usuario ${user_id}`);
+        console.log(`🎫 Token generado: ${subscriptionToken}`);
       } catch (dbError) {
         console.error('❌ Error actualizando BD:', dbError);
       }
     }
 
-    // Página HTML de éxito
+    // Página HTML de éxito CON TOKEN
     const successHTML = `
     <!DOCTYPE html>
     <html lang="es">
@@ -218,7 +226,7 @@ app.get('/payment/success', async (req, res) => {
                 padding: 40px;
                 text-align: center;
                 box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-                max-width: 400px;
+                max-width: 450px;
                 width: 100%;
             }
             .success-icon {
@@ -258,6 +266,54 @@ app.get('/payment/success', async (req, res) => {
             .detail-value {
                 color: #666;
             }
+            .token-section {
+                background: #e8f5e8;
+                border: 2px solid #7A9B57;
+                border-radius: 10px;
+                padding: 20px;
+                margin-bottom: 30px;
+                text-align: center;
+            }
+            .token-title {
+                color: #7A9B57;
+                font-size: 18px;
+                font-weight: bold;
+                margin-bottom: 10px;
+            }
+            .token-value {
+                background: white;
+                border: 1px solid #7A9B57;
+                border-radius: 8px;
+                padding: 15px;
+                font-size: 20px;
+                font-weight: bold;
+                color: #333;
+                letter-spacing: 1px;
+                margin-bottom: 15px;
+                word-break: break-all;
+            }
+            .copy-button {
+                background: #7A9B57;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 14px;
+                margin-top: 10px;
+            }
+            .copy-button:hover {
+                background: #5a7a42;
+            }
+            .instructions {
+                margin-top: 20px;
+                padding: 15px;
+                background: #e7f3ff;
+                border-radius: 8px;
+                font-size: 14px;
+                color: #0066cc;
+                text-align: left;
+            }
             .return-button {
                 background: #7A9B57;
                 color: white;
@@ -273,14 +329,6 @@ app.get('/payment/success', async (req, res) => {
             }
             .return-button:hover {
                 background: #5a7a42;
-            }
-            .instructions {
-                margin-top: 20px;
-                padding: 15px;
-                background: #e7f3ff;
-                border-radius: 8px;
-                font-size: 14px;
-                color: #0066cc;
             }
         </style>
     </head>
@@ -311,11 +359,23 @@ app.get('/payment/success', async (req, res) => {
                 </div>
             </div>
             
+            ${subscriptionToken ? `
+            <div class="token-section">
+                <div class="token-title">🎫 Token de Suscripción</div>
+                <div class="token-value" id="tokenValue">${subscriptionToken}</div>
+                <button class="copy-button" onclick="copyToken()">📋 Copiar Token</button>
+                <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                    Usa este token en la app para activar tu suscripción
+                </div>
+            </div>
+            ` : ''}
+            
             <div class="instructions">
                 <strong>Instrucciones:</strong><br>
-                1. Regresa a la app Nutralis<br>
-                2. Cierra sesión y vuelve a iniciar sesión<br>
-                3. ¡Disfruta de tu acceso completo!
+                1. <strong>Copia el token de suscripción</strong> (botón de arriba)<br>
+                2. <strong>Regresa a la app Nutralis</strong><br>
+                3. <strong>Ingresa el token</strong> en la pantalla de verificación<br>
+                4. <strong>¡Disfruta de tu acceso completo!</strong>
             </div>
             
             <a href="#" class="return-button" onclick="window.close()">
@@ -324,14 +384,65 @@ app.get('/payment/success', async (req, res) => {
         </div>
         
         <script>
-            // Intentar cerrar la ventana automáticamente después de 5 segundos
+            function copyToken() {
+                const tokenValue = document.getElementById('tokenValue').textContent;
+                
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(tokenValue).then(() => {
+                        const button = document.querySelector('.copy-button');
+                        const originalText = button.textContent;
+                        button.textContent = '✅ Copiado!';
+                        button.style.background = '#28a745';
+                        
+                        setTimeout(() => {
+                            button.textContent = originalText;
+                            button.style.background = '#7A9B57';
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('Error copiando:', err);
+                        fallbackCopyToken(tokenValue);
+                    });
+                } else {
+                    fallbackCopyToken(tokenValue);
+                }
+            }
+            
+            function fallbackCopyToken(text) {
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                
+                try {
+                    document.execCommand('copy');
+                    const button = document.querySelector('.copy-button');
+                    button.textContent = '✅ Copiado!';
+                    button.style.background = '#28a745';
+                    
+                    setTimeout(() => {
+                        button.textContent = '📋 Copiar Token';
+                        button.style.background = '#7A9B57';
+                    }, 2000);
+                } catch (err) {
+                    console.error('Error copiando:', err);
+                    alert('Token: ' + text);
+                }
+                
+                document.body.removeChild(textArea);
+            }
+            
+            // Intentar cerrar la ventana automáticamente después de 30 segundos
             setTimeout(() => {
                 try {
                     window.close();
                 } catch (e) {
                     console.log('No se puede cerrar la ventana automáticamente');
                 }
-            }, 5000);
+            }, 30000);
         </script>
     </body>
     </html>
@@ -352,6 +463,125 @@ app.get('/payment/success', async (req, res) => {
     `);
   }
 });
+
+// NUEVA RUTA: Verificar token de suscripción
+app.post('/api/verify-subscription-token', async (req, res) => {
+  try {
+    const { token, userId } = req.body;
+    
+    if (!token || !userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token y ID de usuario son requeridos'
+      });
+    }
+    
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      // Buscar token
+      const [tokenRows] = await connection.execute(
+        `SELECT * FROM subscription_tokens 
+         WHERE token = ? AND user_id = ? AND status = 'active' AND expires_at > NOW()`,
+        [token, userId]
+      );
+      
+      if (tokenRows.length === 0) {
+        return res.json({
+          success: false,
+          message: 'Token inválido, expirado o ya usado'
+        });
+      }
+      
+      const tokenData = tokenRows[0];
+      
+      // Marcar token como usado
+      await connection.execute(
+        `UPDATE subscription_tokens 
+         SET status = 'used', used_at = NOW() 
+         WHERE id = ?`,
+        [tokenData.id]
+      );
+      
+      // Activar acceso del usuario
+      await connection.execute(
+        `UPDATE clientes 
+         SET tiene_acceso = TRUE, fecha_pago = NOW() 
+         WHERE id_cli = ?`,
+        [userId]
+      );
+      
+      console.log(`✅ Token usado exitosamente: ${token} para usuario ${userId}`);
+      
+      res.json({
+        success: true,
+        message: 'Token verificado exitosamente. Acceso activado.',
+        plan_type: tokenData.plan_type,
+        activated_at: new Date().toISOString()
+      });
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error verificando token:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
+const generateSubscriptionToken = (userId, planType, paymentId) => {
+  // Formato: SUB + planType + userId + timestamp + random
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substr(2, 4).toUpperCase();
+  const planPrefix = planType === 'cliente' ? 'CLI' : 'NUT';
+  
+  return `SUB${planPrefix}${userId}${timestamp}${random}`;
+};
+
+// FUNCIÓN: Guardar token en base de datos
+const saveSubscriptionToken = async (userId, token, paymentId, planType) => {
+  try {
+    const connection = await mysql.createConnection(dbConfig);
+    
+    // Crear tabla si no existe
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS subscription_tokens (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        token VARCHAR(50) UNIQUE NOT NULL,
+        payment_id VARCHAR(100),
+        plan_type VARCHAR(20) NOT NULL,
+        status ENUM('active', 'used', 'expired') DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL 7 DAY),
+        used_at TIMESTAMP NULL,
+        INDEX idx_token (token),
+        INDEX idx_user_id (user_id),
+        INDEX idx_status (status)
+      )
+    `);
+    
+    // Insertar token
+    await connection.execute(
+      `INSERT INTO subscription_tokens 
+       (user_id, token, payment_id, plan_type) 
+       VALUES (?, ?, ?, ?)`,
+      [userId, token, paymentId, planType]
+    );
+    
+    await connection.end();
+    console.log(`✅ Token de suscripción guardado: ${token}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error guardando token:', error);
+    return false;
+  }
+};
+
 
 // GET /payment/failure - Pago fallido
 app.get('/payment/failure', (req, res) => {
