@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const { MercadoPagoConfig, Payment, Preference } = require('mercadopago');
 const express = require('express');
 const mysql = require('mysql2/promise');
 const cors = require('cors');
@@ -34,6 +35,317 @@ const dbConfig = {
   password: process.env.DB_PASS,
   database: process.env.DB_NAME
 };
+
+const mercadopago = new MercadoPagoConfig({
+  accessToken: process.env.MP_ACCESS_TOKEN || 'TEST-3273803796754942-071504-bb24735cf345727f37edd8cf177909da-398459562', // Reemplaza con tu token real
+  options: {
+    timeout: 5000,
+    idempotencyKey: 'abc123'
+  }
+});
+
+const payment = new Payment(mercadopago);
+const preference = new Preference(mercadopago);
+
+app.post('/api/mercadopago/create-preference', async (req, res) => {
+  try {
+    const { 
+      title, 
+      price, 
+      quantity = 1, 
+      currency_id = 'MXN',
+      user_id,
+      user_email,
+      plan_type 
+    } = req.body;
+
+    console.log('💳 Creando preferencia de pago:', { title, price, user_email, plan_type });
+
+    // Validar datos requeridos
+    if (!title || !price || !user_email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Faltan datos requeridos: title, price, user_email'
+      });
+    }
+
+    // Crear preferencia de pago
+    const preferenceData = {
+      items: [
+        {
+          title: title,
+          unit_price: parseFloat(price),
+          quantity: parseInt(quantity),
+          currency_id: currency_id
+        }
+      ],
+      payer: {
+        email: user_email,
+        ...(user_id && { external_reference: user_id.toString() })
+      },
+      back_urls: {
+        success: 'https://integradora1.com/payment/success',
+        failure: 'https://integradora1.com/payment/failure',
+        pending: 'https://integradora1.com/payment/pending'
+      },
+      auto_return: 'approved',
+      external_reference: JSON.stringify({
+        user_id: user_id,
+        plan_type: plan_type,
+        timestamp: new Date().toISOString()
+      }),
+      statement_descriptor: 'NUTRALIS',
+      expires: true,
+      expiration_date_from: new Date().toISOString(),
+      expiration_date_to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 horas
+    };
+
+    const result = await preference.create({ body: preferenceData });
+    
+    console.log('✅ Preferencia creada:', result.id);
+
+    res.json({
+      success: true,
+      preference_id: result.id,
+      init_point: result.init_point, // URL para web
+      sandbox_init_point: result.sandbox_init_point, // URL para pruebas
+      payment_data: {
+        preference_id: result.id,
+        collector_id: result.collector_id
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error creando preferencia MP:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creando preferencia de pago',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/mercadopago/webhook - Webhook para notificaciones de MP
+app.post('/api/mercadopago/webhook', async (req, res) => {
+  try {
+    const { type, data } = req.body;
+    
+    console.log('🔔 Webhook MP recibido:', { type, data });
+
+    if (type === 'payment') {
+      const paymentId = data.id;
+      
+      // Obtener información del pago
+      const paymentInfo = await payment.get({ id: paymentId });
+      
+      console.log('💰 Información del pago:', {
+        id: paymentInfo.id,
+        status: paymentInfo.status,
+        status_detail: paymentInfo.status_detail,
+        external_reference: paymentInfo.external_reference
+      });
+
+      // Procesar según el estado del pago
+      if (paymentInfo.status === 'approved') {
+        await procesarPagoAprobado(paymentInfo);
+      } else if (paymentInfo.status === 'rejected') {
+        await procesarPagoRechazado(paymentInfo);
+      }
+    }
+
+    res.status(200).json({ success: true });
+
+  } catch (error) {
+    console.error('❌ Error en webhook MP:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/mercadopago/payment/:payment_id - Verificar estado de pago
+app.get('/api/mercadopago/payment/:payment_id', async (req, res) => {
+  try {
+    const { payment_id } = req.params;
+    
+    const paymentInfo = await payment.get({ id: payment_id });
+    
+    res.json({
+      success: true,
+      payment: {
+        id: paymentInfo.id,
+        status: paymentInfo.status,
+        status_detail: paymentInfo.status_detail,
+        amount: paymentInfo.transaction_amount,
+        currency: paymentInfo.currency_id,
+        external_reference: paymentInfo.external_reference,
+        date_created: paymentInfo.date_created,
+        date_approved: paymentInfo.date_approved
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo pago MP:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo información del pago',
+      error: error.message
+    });
+  }
+});
+
+// =============================================================================
+// FUNCIONES AUXILIARES PARA MERCADO PAGO
+// =============================================================================
+
+// Procesar pago aprobado
+const procesarPagoAprobado = async (paymentInfo) => {
+  try {
+    console.log('✅ Procesando pago aprobado:', paymentInfo.id);
+    
+    // Parsear external_reference
+    let referenceData = {};
+    try {
+      referenceData = JSON.parse(paymentInfo.external_reference || '{}');
+    } catch (e) {
+      console.log('⚠️ No se pudo parsear external_reference');
+    }
+
+    const { user_id, plan_type } = referenceData;
+
+    if (user_id) {
+      // Actualizar acceso del usuario en la base de datos
+      const connection = await mysql.createConnection(dbConfig);
+      
+      try {
+        // Determinar el tipo de usuario y tabla
+        let updateQuery = '';
+        let tableName = '';
+        
+        if (plan_type === 'nutriologo') {
+          tableName = 'nutriologos';
+          updateQuery = `
+            UPDATE nutriologos 
+            SET tiene_acceso = TRUE, activo = TRUE, fecha_pago = NOW() 
+            WHERE id_nut = ?
+          `;
+        } else {
+          tableName = 'clientes';
+          updateQuery = `
+            UPDATE clientes 
+            SET tiene_acceso = TRUE, fecha_pago = NOW() 
+            WHERE id_cli = ?
+          `;
+        }
+
+        await connection.execute(updateQuery, [user_id]);
+        
+        // Registrar el pago en tabla de pagos
+        await connection.execute(
+          `INSERT INTO pagos_registrados 
+           (user_id, plan_type, monto, moneda, payment_id, estado, fecha_pago) 
+           VALUES (?, ?, ?, ?, ?, 'approved', NOW())`,
+          [
+            user_id,
+            plan_type || 'cliente',
+            paymentInfo.transaction_amount,
+            paymentInfo.currency_id,
+            paymentInfo.id
+          ]
+        );
+
+        console.log(`✅ Acceso activado para ${plan_type || 'cliente'} ID: ${user_id}`);
+        
+      } finally {
+        await connection.end();
+      }
+    }
+
+  } catch (error) {
+    console.error('❌ Error procesando pago aprobado:', error);
+  }
+};
+
+// Procesar pago rechazado
+const procesarPagoRechazado = async (paymentInfo) => {
+  try {
+    console.log('❌ Procesando pago rechazado:', paymentInfo.id);
+    
+    let referenceData = {};
+    try {
+      referenceData = JSON.parse(paymentInfo.external_reference || '{}');
+    } catch (e) {
+      console.log('⚠️ No se pudo parsear external_reference');
+    }
+
+    const { user_id, plan_type } = referenceData;
+
+    if (user_id) {
+      const connection = await mysql.createConnection(dbConfig);
+      
+      try {
+        // Registrar el pago fallido
+        await connection.execute(
+          `INSERT INTO pagos_registrados 
+           (user_id, plan_type, monto, moneda, payment_id, estado, fecha_pago) 
+           VALUES (?, ?, ?, ?, ?, 'rejected', NOW())`,
+          [
+            user_id,
+            plan_type || 'cliente',
+            paymentInfo.transaction_amount,
+            paymentInfo.currency_id,
+            paymentInfo.id
+          ]
+        );
+
+        console.log(`❌ Pago rechazado para ${plan_type || 'cliente'} ID: ${user_id}`);
+        
+      } finally {
+        await connection.end();
+      }
+    }
+
+  } catch (error) {
+    console.error('❌ Error procesando pago rechazado:', error);
+  }
+};
+
+// GET /api/mercadopago/plans - Obtener planes disponibles
+app.get('/api/mercadopago/plans', (req, res) => {
+  const plans = [
+    {
+      id: 'cliente_mensual',
+      name: 'Plan Cliente Mensual',
+      description: 'Acceso completo a la app móvil por 1 mes',
+      price: 99.00,
+      currency: 'MXN',
+      duration: '1 mes',
+      features: [
+        'Registro de comidas',
+        'Seguimiento nutricional',
+        'Estadísticas personales',
+        'Báscula inteligente'
+      ]
+    },
+    {
+      id: 'nutriologo_mensual',
+      name: 'Plan Nutriólogo Mensual',
+      description: 'Acceso al panel web para nutriólogos por 1 mes',
+      price: 299.00,
+      currency: 'MXN',
+      duration: '1 mes',
+      features: [
+        'Panel de administración',
+        'Gestión de clientes',
+        'Reportes detallados',
+        'Comunicación con clientes'
+      ]
+    }
+  ];
+
+  res.json({
+    success: true,
+    plans: plans
+  });
+});
 
 // Configuración MongoDB Atlas desde .env
 const mongoUrl = process.env.MONGO_URI;
