@@ -127,6 +127,440 @@ back_urls: {
   }
 });
 
+// Agregar estas rutas a tu servidor en nutweb.onrender.com
+
+// GET /payment/success - Pago exitoso
+app.get('/payment/success', async (req, res) => {
+  try {
+    const {
+      collection_id,
+      collection_status,
+      payment_id,
+      status,
+      external_reference,
+      payment_type,
+      merchant_order_id,
+      preference_id
+    } = req.query;
+
+    console.log('✅ Pago exitoso recibido:', {
+      payment_id,
+      status,
+      external_reference
+    });
+
+    // Parsear external_reference
+    let referenceData = {};
+    try {
+      referenceData = JSON.parse(decodeURIComponent(external_reference));
+    } catch (e) {
+      console.log('⚠️ No se pudo parsear external_reference:', external_reference);
+    }
+
+    const { user_id, plan_type } = referenceData;
+
+    // Actualizar base de datos si tenemos user_id
+    if (user_id && status === 'approved') {
+      try {
+        const connection = await mysql.createConnection(dbConfig);
+        
+        // Actualizar acceso del usuario
+        const updateQuery = `
+          UPDATE clientes 
+          SET tiene_acceso = TRUE, fecha_pago = NOW() 
+          WHERE id_cli = ?
+        `;
+        
+        await connection.execute(updateQuery, [user_id]);
+        
+        // Registrar el pago si tienes la tabla
+        try {
+          await connection.execute(
+            `INSERT INTO pagos_registrados 
+             (user_id, plan_type, monto, moneda, payment_id, estado, fecha_pago) 
+             VALUES (?, ?, ?, ?, ?, 'approved', NOW())`,
+            [user_id, plan_type || 'cliente', 99.00, 'MXN', payment_id]
+          );
+        } catch (insertError) {
+          console.log('⚠️ No se pudo registrar el pago (tabla no existe):', insertError.message);
+        }
+        
+        await connection.end();
+        
+        console.log(`✅ Acceso activado para usuario ${user_id}`);
+      } catch (dbError) {
+        console.error('❌ Error actualizando BD:', dbError);
+      }
+    }
+
+    // Página HTML de éxito
+    const successHTML = `
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Pago Exitoso - Nutralis</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background: linear-gradient(135deg, #7A9B57, #5a7a42);
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+            }
+            .container {
+                background: white;
+                border-radius: 20px;
+                padding: 40px;
+                text-align: center;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                max-width: 400px;
+                width: 100%;
+            }
+            .success-icon {
+                font-size: 60px;
+                color: #28a745;
+                margin-bottom: 20px;
+            }
+            .title {
+                color: #333;
+                font-size: 24px;
+                font-weight: bold;
+                margin-bottom: 15px;
+            }
+            .message {
+                color: #666;
+                font-size: 16px;
+                margin-bottom: 30px;
+                line-height: 1.5;
+            }
+            .payment-details {
+                background: #f8f9fa;
+                border-radius: 10px;
+                padding: 20px;
+                margin-bottom: 30px;
+                text-align: left;
+            }
+            .detail-row {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 10px;
+                font-size: 14px;
+            }
+            .detail-label {
+                font-weight: bold;
+                color: #333;
+            }
+            .detail-value {
+                color: #666;
+            }
+            .return-button {
+                background: #7A9B57;
+                color: white;
+                border: none;
+                padding: 15px 30px;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+                text-decoration: none;
+                display: inline-block;
+                transition: background 0.3s;
+            }
+            .return-button:hover {
+                background: #5a7a42;
+            }
+            .instructions {
+                margin-top: 20px;
+                padding: 15px;
+                background: #e7f3ff;
+                border-radius: 8px;
+                font-size: 14px;
+                color: #0066cc;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="success-icon">✅</div>
+            <h1 class="title">¡Pago Exitoso!</h1>
+            <p class="message">
+                Tu pago ha sido procesado correctamente. Ya tienes acceso completo a Nutralis.
+            </p>
+            
+            <div class="payment-details">
+                <div class="detail-row">
+                    <span class="detail-label">ID de Pago:</span>
+                    <span class="detail-value">${payment_id}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Estado:</span>
+                    <span class="detail-value">${status === 'approved' ? 'Aprobado' : status}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Método:</span>
+                    <span class="detail-value">${payment_type === 'debit_card' ? 'Tarjeta de Débito' : payment_type}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Plan:</span>
+                    <span class="detail-value">Cliente Mensual - $99 MXN</span>
+                </div>
+            </div>
+            
+            <div class="instructions">
+                <strong>Instrucciones:</strong><br>
+                1. Regresa a la app Nutralis<br>
+                2. Cierra sesión y vuelve a iniciar sesión<br>
+                3. ¡Disfruta de tu acceso completo!
+            </div>
+            
+            <a href="#" class="return-button" onclick="window.close()">
+                Cerrar Ventana
+            </a>
+        </div>
+        
+        <script>
+            // Intentar cerrar la ventana automáticamente después de 5 segundos
+            setTimeout(() => {
+                try {
+                    window.close();
+                } catch (e) {
+                    console.log('No se puede cerrar la ventana automáticamente');
+                }
+            }, 5000);
+        </script>
+    </body>
+    </html>
+    `;
+
+    res.send(successHTML);
+
+  } catch (error) {
+    console.error('❌ Error en payment/success:', error);
+    res.status(500).send(`
+      <html>
+        <body style="font-family: Arial; text-align: center; padding: 50px;">
+          <h2>Error procesando el pago</h2>
+          <p>Tu pago fue procesado, pero hubo un error en nuestro servidor.</p>
+          <p>Por favor, contacta a soporte.</p>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// GET /payment/failure - Pago fallido
+app.get('/payment/failure', (req, res) => {
+  const { payment_id, status, external_reference } = req.query;
+  
+  console.log('❌ Pago fallido:', { payment_id, status, external_reference });
+
+  const failureHTML = `
+  <!DOCTYPE html>
+  <html lang="es">
+  <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Pago Fallido - Nutralis</title>
+      <style>
+          body {
+              font-family: Arial, sans-serif;
+              background: linear-gradient(135deg, #dc3545, #c82333);
+              margin: 0;
+              padding: 20px;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+          }
+          .container {
+              background: white;
+              border-radius: 20px;
+              padding: 40px;
+              text-align: center;
+              box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+              max-width: 400px;
+              width: 100%;
+          }
+          .error-icon {
+              font-size: 60px;
+              color: #dc3545;
+              margin-bottom: 20px;
+          }
+          .title {
+              color: #333;
+              font-size: 24px;
+              font-weight: bold;
+              margin-bottom: 15px;
+          }
+          .message {
+              color: #666;
+              font-size: 16px;
+              margin-bottom: 30px;
+              line-height: 1.5;
+          }
+          .retry-button {
+              background: #7A9B57;
+              color: white;
+              border: none;
+              padding: 15px 30px;
+              border-radius: 8px;
+              font-size: 16px;
+              font-weight: bold;
+              cursor: pointer;
+              text-decoration: none;
+              display: inline-block;
+              margin-right: 10px;
+              transition: background 0.3s;
+          }
+          .retry-button:hover {
+              background: #5a7a42;
+          }
+          .close-button {
+              background: #6c757d;
+              color: white;
+              border: none;
+              padding: 15px 30px;
+              border-radius: 8px;
+              font-size: 16px;
+              cursor: pointer;
+              text-decoration: none;
+              display: inline-block;
+              transition: background 0.3s;
+          }
+          .close-button:hover {
+              background: #5a6268;
+          }
+      </style>
+  </head>
+  <body>
+      <div class="container">
+          <div class="error-icon">❌</div>
+          <h1 class="title">Pago No Procesado</h1>
+          <p class="message">
+              Tu pago no pudo ser procesado. No se realizó ningún cargo.
+          </p>
+          
+          <div style="margin-top: 30px;">
+              <a href="#" class="retry-button" onclick="window.close()">
+                  Volver a Intentar
+              </a>
+              <a href="#" class="close-button" onclick="window.close()">
+                  Cerrar
+              </a>
+          </div>
+      </div>
+  </body>
+  </html>
+  `;
+
+  res.send(failureHTML);
+});
+
+// GET /payment/pending - Pago pendiente
+app.get('/payment/pending', (req, res) => {
+  const { payment_id, status, external_reference } = req.query;
+  
+  console.log('⏳ Pago pendiente:', { payment_id, status, external_reference });
+
+  const pendingHTML = `
+  <!DOCTYPE html>
+  <html lang="es">
+  <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Pago Pendiente - Nutralis</title>
+      <style>
+          body {
+              font-family: Arial, sans-serif;
+              background: linear-gradient(135deg, #ffc107, #e0a800);
+              margin: 0;
+              padding: 20px;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+          }
+          .container {
+              background: white;
+              border-radius: 20px;
+              padding: 40px;
+              text-align: center;
+              box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+              max-width: 400px;
+              width: 100%;
+          }
+          .pending-icon {
+              font-size: 60px;
+              color: #ffc107;
+              margin-bottom: 20px;
+          }
+          .title {
+              color: #333;
+              font-size: 24px;
+              font-weight: bold;
+              margin-bottom: 15px;
+          }
+          .message {
+              color: #666;
+              font-size: 16px;
+              margin-bottom: 30px;
+              line-height: 1.5;
+          }
+          .info-box {
+              background: #fff3cd;
+              border: 1px solid #ffeaa7;
+              border-radius: 8px;
+              padding: 15px;
+              margin-bottom: 20px;
+              font-size: 14px;
+              color: #856404;
+          }
+          .close-button {
+              background: #7A9B57;
+              color: white;
+              border: none;
+              padding: 15px 30px;
+              border-radius: 8px;
+              font-size: 16px;
+              cursor: pointer;
+              text-decoration: none;
+              display: inline-block;
+              transition: background 0.3s;
+          }
+          .close-button:hover {
+              background: #5a7a42;
+          }
+      </style>
+  </head>
+  <body>
+      <div class="container">
+          <div class="pending-icon">⏳</div>
+          <h1 class="title">Pago Pendiente</h1>
+          <p class="message">
+              Tu pago está siendo procesado. Te notificaremos cuando se complete.
+          </p>
+          
+          <div class="info-box">
+              <strong>ID de Pago:</strong> ${payment_id || 'N/A'}<br>
+              <strong>Estado:</strong> ${status || 'Pendiente'}
+          </div>
+          
+          <a href="#" class="close-button" onclick="window.close()">
+              Cerrar Ventana
+          </a>
+      </div>
+  </body>
+  </html>
+  `;
+
+  res.send(pendingHTML);
+});
+
 // POST /api/mercadopago/webhook - Webhook para notificaciones de MP
 app.post('/api/mercadopago/webhook', async (req, res) => {
   try {
