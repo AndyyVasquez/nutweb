@@ -1139,19 +1139,36 @@ async function connectMongo() {
     });
 
     await mongoClient.connect();
-    mongoDB = mongoClient.db(process.env.MONGO_DB); // ✅ GLOBAL
+    mongoDB = mongoClient.db(process.env.MONGO_DB);
 
     console.log("✅ Conectado a MongoDB:", mongoDB.databaseName);
 
-    // Debug opcional:
-    const colecciones = await mongoDB.listCollections().toArray();
-    console.log("📂 Colecciones disponibles:", colecciones.map(c => c.name));
+    // 🔍 DEBUGGING MEJORADO
+    try {
+      const colecciones = await mongoDB.listCollections().toArray();
+      console.log("📂 Colecciones disponibles:", colecciones.map(c => c.name));
+
+      // Verificar actividad_pasos específicamente
+      const actividadCollection = mongoDB.collection('actividad_pasos');
+      const count = await actividadCollection.countDocuments();
+      console.log("📊 Total documentos en actividad_pasos:", count);
+
+      if (count > 0) {
+        const samples = await actividadCollection.find({}).limit(3).toArray();
+        console.log("📋 Documentos de muestra en actividad_pasos:");
+        samples.forEach((doc, index) => {
+          console.log(`  ${index + 1}. id_cli: ${doc.id_cli}, fecha: ${doc.fecha}, pasos: ${doc.pasos}`);
+        });
+      }
+
+    } catch (debugError) {
+      console.error("❌ Error en debugging de colecciones:", debugError);
+    }
 
   } catch (err) {
     console.error('❌ Error conectando a MongoDB:', err);
   }
 }
-
 connectMongo();
 
 //iot
