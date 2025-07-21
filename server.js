@@ -2165,18 +2165,21 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
 
     console.log('👟 Obteniendo pasos de MongoDB para usuario:', id_cli);
     const collection = mongoDB.collection('actividad_pasos');
+if (fecha) {
+  const parsedId = parseInt(id_cli);
+  const cleanFecha = String(fecha).trim();
 
-    if (fecha) {
-      const parsedId = parseInt(id_cli);
-      const documentos = await collection.find({
-        id_cli: parsedId,
-        fecha: fecha
-      }).sort({ timestamp: -1 }).limit(1).toArray();
+  console.log('🧪 Consulta forzada:', { id_cli: parsedId, fecha: cleanFecha });
 
-      console.log("🧪 Consulta:", { id_cli: parsedId, fecha });
-      console.log("📄 Documentos encontrados:", documentos);
+  const documentos = await collection.find({
+    id_cli: parsedId,
+    fecha: cleanFecha
+  }).sort({ timestamp: -1 }).limit(1).toArray();
 
-      const documento = documentos[0];
+  console.log("📄 Documentos encontrados:", documentos);
+
+  const documento = documentos[0];
+
 
       if (documento) {
         res.json({
