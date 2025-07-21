@@ -543,53 +543,50 @@ const generateSubscriptionToken = (userId, planType, paymentId) => {
 };
 
 // POST para obtener la dieta actual del cliente
-router.post('/dieta-actual', (req, res) => {
+app.post('/api/dieta-actual', async (req, res) => {
   const { idCliente } = req.body;
 
   if (!idCliente || isNaN(idCliente)) {
     return res.status(400).json({ error: 'ID de cliente inválido' });
   }
 
-  // Query para obtener la dieta más reciente del cliente
-  const query = `
-    SELECT 
-      d.id_dieta,
-      d.nombre_dieta,
-      d.objetivo_dieta,
-      d.duracion,
-      d.porcentaje_proteinas,
-      d.porcentaje_carbs,
-      d.porcentaje_grasas,
-      d.calorias_objetivo,
-      d.recomendaciones,
-      d.fecha_inicio as fecha_creacion,
-      tc.id_tiempo,
-      tc.nombre_tiempo,
-      ad.id_alimento_dieta,
-      ad.nombre_alimento,
-      ad.cantidad_gramos,
-      ad.calorias,
-      ad.grupo_alimenticio
-    FROM 
-      dietas d
-    LEFT JOIN 
-      tiempos_comida tc ON d.id_dieta = tc.id_dieta
-    LEFT JOIN 
-      alimentos_dieta ad ON tc.id_tiempo = ad.id_tiempo
-    WHERE 
-      d.id_cli = ?
-    ORDER BY 
-      d.fecha_inicio DESC, 
-      tc.id_tiempo ASC,
-      ad.id_alimento_dieta ASC
-    LIMIT 100
-  `;
+  try {
+    // Query para obtener la dieta más reciente del cliente
+    const query = `
+      SELECT 
+        d.id_dieta,
+        d.nombre_dieta,
+        d.objetivo_dieta,
+        d.duracion,
+        d.porcentaje_proteinas,
+        d.porcentaje_carbs,
+        d.porcentaje_grasas,
+        d.calorias_objetivo,
+        d.recomendaciones,
+        d.fecha_inicio as fecha_creacion,
+        tc.id_tiempo,
+        tc.nombre_tiempo,
+        ad.id_alimento_dieta,
+        ad.nombre_alimento,
+        ad.cantidad_gramos,
+        ad.calorias,
+        ad.grupo_alimenticio
+      FROM 
+        dietas d
+      LEFT JOIN 
+        tiempos_comida tc ON d.id_dieta = tc.id_dieta
+      LEFT JOIN 
+        alimentos_dieta ad ON tc.id_tiempo = ad.id_tiempo
+      WHERE 
+        d.id_cli = ?
+      ORDER BY 
+        d.fecha_inicio DESC, 
+        tc.id_tiempo ASC,
+        ad.id_alimento_dieta ASC
+      LIMIT 100
+    `;
 
-  connection.query(query, [idCliente], (err, results) => {
-    if (err) {
-      console.error('Error al obtener dieta actual:', err);
-      return res.status(500).json({ error: 'Error en la base de datos' });
-    }
+    const [results] = await pool.execute(query, [idCliente]);
 
     if (results.length === 0) {
       return res.json(null);
@@ -641,8 +638,14 @@ router.post('/dieta-actual', (req, res) => {
       return orden.indexOf(a.nombre_tiempo) - orden.indexOf(b.nombre_tiempo);
     });
 
+    console.log('✅ Dieta encontrada para cliente', idCliente, ':', dietaData.nombre_dieta);
+
     res.json(dietaData);
-  });
+
+  } catch (error) {
+    console.error('❌ Error al obtener dieta actual:', error);
+    res.status(500).json({ error: 'Error en la base de datos' });
+  }
 });
 
 // FUNCIÓN: Guardar token en base de datos
