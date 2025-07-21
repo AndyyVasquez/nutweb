@@ -2170,11 +2170,16 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
     
  if (fecha) {
   // Obtener el documento más reciente para ese usuario y fecha
-  const documentos = await collection.find({
-    id_cli: parseInt(id_cli),
-    fecha: fecha
-  }).toArray();
-  
+  console.log("🧪 Consulta:", {
+  id_cli: parseInt(id_cli),
+  fecha: fecha
+});
+const documentos = await collection.find({
+  id_cli: parseInt(id_cli)
+}).sort({ timestamp: -1 }).limit(5).toArray();
+
+console.log("📄 Documentos por id_cli:", documentos);
+
 
   console.log("📄 Documentos encontrados:", documentos);
 
