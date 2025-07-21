@@ -2151,10 +2151,11 @@ app.get('/api/iot/pedometer/steps/:id_cli', async (req, res) => {
   }
 });
 
+// GET /api/iot/pedometer/steps/mongo/:id_cli
 app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
   try {
     const { id_cli } = req.params;
-    const { fecha, dias = 7 } = req.query;
+    const { fecha } = req.query;
 
     if (!mongoDB) {
       return res.status(500).json({
@@ -2164,76 +2165,52 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
     }
 
     console.log('👟 Obteniendo pasos de MongoDB para usuario:', id_cli);
-    const collection = mongoDB.collection('actividad_pasos');
-if (fecha) {
-  const parsedId = parseInt(id_cli);
-  const cleanFecha = String(fecha).trim();
+    console.log('🧠 Base de datos actual:', mongoDB.databaseName);
 
-  console.log('🧪 Consulta forzada:', { id_cli: parsedId, fecha: cleanFecha });
+    const collectionName = 'actividad_pasos';
+    const collection = mongoDB.collection(collectionName);
+    
+    const parsedId = parseInt(id_cli);
+    const cleanFecha = (fecha || new Date().toISOString().split('T')[0]).trim();
 
-  const documentos = await collection.find({
-    id_cli: parsedId,
-    fecha: cleanFecha
-  }).sort({ timestamp: -1 }).limit(1).toArray();
+    console.log('🧪 Consulta forzada:', { id_cli: parsedId, fecha: cleanFecha });
 
-  console.log("📄 Documentos encontrados:", documentos);
+    // DEBUG extra: verificar todos los documentos que coincidan solo por id_cli
+    const docsPorID = await collection.find({ id_cli: parsedId }).toArray();
+    console.log("📄 Docs con id_cli:", docsPorID.length, docsPorID);
 
-  const documento = documentos[0];
+    // Buscar por id y fecha
+    const documentos = await collection.find({
+      id_cli: parsedId,
+      fecha: cleanFecha
+    }).sort({ timestamp: -1 }).limit(1).toArray();
 
+    console.log("📄 Documentos encontrados:", documentos.length, documentos);
 
-      if (documento) {
-        res.json({
-          success: true,
-          data: {
-            fecha: documento.fecha,
-            pasos: documento.pasos,
-            calorias_gastadas: documento.calorias_gastadas,
-            distancia_km: documento.distancia_km,
-            hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
-            dispositivo: documento.dispositivo
-          }
-        });
-      } else {
-        res.json({
-          success: true,
-          data: {
-            fecha,
-            pasos: 0,
-            calorias_gastadas: 0,
-            distancia_km: 0,
-            hora_ultima_actualizacion: null,
-            dispositivo: null
-          }
-        });
-      }
+    const documento = documentos[0];
 
-    } else {
-      // si no se da una fecha, obtener últimos X días
-      const parsedId = parseInt(id_cli);
-      const fechaInicio = new Date();
-      fechaInicio.setDate(fechaInicio.getDate() - parseInt(dias));
-      const fechaInicioStr = fechaInicio.toISOString().split('T')[0];
-
-      const documentos = await collection.find({
-        id_cli: parsedId,
-        fecha: { $gte: fechaInicioStr }
-      }).sort({ fecha: -1 }).toArray();
-
-      const totalPasos = documentos.reduce((sum, d) => sum + (d.pasos || 0), 0);
-      const totalCalorias = documentos.reduce((sum, d) => sum + (d.calorias_gastadas || 0), 0);
-      const totalDistancia = documentos.reduce((sum, d) => sum + (d.distancia_km || 0), 0);
-      const promedioPasos = documentos.length ? Math.round(totalPasos / documentos.length) : 0;
-
+    if (documento) {
       res.json({
         success: true,
-        data: documentos,
-        estadisticas: {
-          dias_consultados: parseInt(dias),
-          total_pasos: totalPasos,
-          total_calorias: totalCalorias,
-          total_distancia_km: totalDistancia.toFixed(2),
-          promedio_pasos_dia: promedioPasos,
-          dias_activos: documentos.length
+        data: {
+          fecha: documento.fecha,
+          pasos: documento.pasos,
+          calorias_gastadas: documento.calorias_gastadas,
+          distancia_km: documento.distancia_km,
+          hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
+          dispositivo: documento.dispositivo
+        }
+      });
+    } else {
+      res.json({
+        success: true,
+        data: {
+          fecha: cleanFecha,
+          pasos: 0,
+          calorias_gastadas: 0,
+          distancia_km: 0,
+          hora_ultima_actualizacion: null,
+          dispositivo: null
         }
       });
     }
@@ -2247,6 +2224,7 @@ if (fecha) {
     });
   }
 });
+
 
 app.post('/api/iot/pedometer/save', async (req, res) => {
   try {
