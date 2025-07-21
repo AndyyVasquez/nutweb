@@ -2157,8 +2157,8 @@ app.get('/api/iot/pedometer/steps/:id_cli', async (req, res) => {
   }
 });
 
-// GET /api/iot/pedometer/steps/mongo/:id_cli
-// GET /api/iot/pedometer/steps/mongo/:id_cli - Obtener pasos desde MongoDB
+
+// En tu servidor, en el endpoint /api/iot/pedometer/steps/mongo/:id_cli
 app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
   try {
     const { id_cli } = req.params;
@@ -2176,10 +2176,20 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
 
     const collection = mongoDB.collection('actividad_pasos');
 
+    // 🔍 DEBUGGING: Ver todos los documentos primero
+    const todosLosDocumentos = await collection.find({}).toArray();
+    console.log('📚 TODOS los documentos en la colección:', todosLosDocumentos);
+
+    // 🔍 DEBUGGING: Ver documentos para este usuario
+    const documentosUsuario = await collection.find({ id_cli: parseInt(id_cli) }).toArray();
+    console.log('👤 Documentos para usuario', id_cli, ':', documentosUsuario);
+
     const filter = {
       id_cli: parseInt(id_cli),
       ...(fecha && { fecha: fecha })
     };
+
+    console.log('🔍 Filtro de búsqueda:', filter);
 
     const documentos = await collection
       .find(filter)
@@ -2187,7 +2197,7 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
       .limit(1)
       .toArray();
 
-    console.log("📄 Documentos encontrados:", documentos);
+    console.log("📄 Documentos encontrados con filtro:", documentos);
 
     const documento = documentos[0];
 
@@ -2225,9 +2235,6 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
     });
   }
 });
-
-
-
 
 app.post('/api/iot/pedometer/save', async (req, res) => {
   try {
