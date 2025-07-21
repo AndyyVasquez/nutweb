@@ -2170,10 +2170,13 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
     
     if (fecha) {
       // Obtener datos de una fecha específica
-      const documento = await collection.findOne({
-        id_cli: parseInt(id_cli),
-        fecha: fecha
-      });
+   const documentos = await collection.find({
+  id_cli: parseInt(id_cli),
+  fecha: fecha
+}).sort({ timestamp: -1 }).limit(1).toArray();
+
+const documento = documentos[0];
+
 
       if (documento) {
         res.json({
