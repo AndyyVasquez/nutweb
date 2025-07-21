@@ -2168,71 +2168,44 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
 
     const collection = mongoDB.collection('actividad_pasos');
     
-    if (fecha) {
-      // Obtener datos de una fecha específica
-   const documentos = await collection.find({
-  id_cli: parseInt(id_cli),
-  fecha: fecha
-}).sort({ timestamp: -1 }).limit(1).toArray();
+ if (fecha) {
+  // Obtener el documento más reciente para ese usuario y fecha
+  const documentos = await collection.find({
+    id_cli: parseInt(id_cli),
+    fecha: fecha
+  }).sort({ timestamp: -1 }).limit(1).toArray();
 
-const documento = documentos[0];
+  console.log("📄 Documentos encontrados:", documentos);
 
+  const documento = documentos[0];
 
-      if (documento) {
-        res.json({
-          success: true,
-          data: {
-            fecha: documento.fecha,
-            pasos: documento.pasos,
-            calorias_gastadas: documento.calorias_gastadas,
-            distancia_km: documento.distancia_km,
-            hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
-            dispositivo: documento.dispositivo
-          }
-        });
-      } else {
-        res.json({
-          success: true,
-          data: {
-            fecha: fecha,
-            pasos: 0,
-            calorias_gastadas: 0,
-            distancia_km: 0,
-            hora_ultima_actualizacion: null,
-            dispositivo: null
-          }
-        });
+  if (documento) {
+    res.json({
+      success: true,
+      data: {
+        fecha: documento.fecha,
+        pasos: documento.pasos,
+        calorias_gastadas: documento.calorias_gastadas,
+        distancia_km: documento.distancia_km,
+        hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
+        dispositivo: documento.dispositivo
       }
-    } else {
-      // Obtener datos de los últimos X días
-      const fechaInicio = new Date();
-      fechaInicio.setDate(fechaInicio.getDate() - parseInt(dias));
-      const fechaInicioStr = fechaInicio.toISOString().split('T')[0];
+    });
+  } else {
+    res.json({
+      success: true,
+      data: {
+        fecha: fecha,
+        pasos: 0,
+        calorias_gastadas: 0,
+        distancia_km: 0,
+        hora_ultima_actualizacion: null,
+        dispositivo: null
+      }
+    });
+  }
+}
 
-      const documentos = await collection.find({
-        id_cli: parseInt(id_cli),
-        fecha: { $gte: fechaInicioStr }
-      }).sort({ fecha: -1 }).toArray();
-
-      // Calcular estadísticas
-      const totalPasos = documentos.reduce((sum, doc) => sum + (doc.pasos || 0), 0);
-      const totalCalorias = documentos.reduce((sum, doc) => sum + (doc.calorias_gastadas || 0), 0);
-      const totalDistancia = documentos.reduce((sum, doc) => sum + (doc.distancia_km || 0), 0);
-      const promedioPasos = documentos.length > 0 ? Math.round(totalPasos / documentos.length) : 0;
-
-      res.json({
-        success: true,
-        data: documentos,
-        estadisticas: {
-          dias_consultados: parseInt(dias),
-          total_pasos: totalPasos,
-          total_calorias: totalCalorias,
-          total_distancia_km: totalDistancia.toFixed(2),
-          promedio_pasos_dia: promedioPasos,
-          dias_activos: documentos.length
-        }
-      });
-    }
 
   } catch (error) {
     console.error('❌ Error obteniendo pasos de MongoDB:', error);
