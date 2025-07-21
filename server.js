@@ -1128,24 +1128,30 @@ const pool = mysql.createPool(dbConfig);
 
 // Cliente MongoDB
 let mongoClient;
-let mongoDB;
+let mongoDB = null;
 
-// Conectar a MongoDB
-const connectMongo = async () => {
+//conectar mongodb
+async function connectMongo() {
   try {
-    mongoClient = new MongoClient(mongoUrl, {
+    const mongoClient = new MongoClient(process.env.MONGO_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true
     });
-    await mongoClient.connect();
-    mongoDB = mongoClient.db(mongoDbName);
-    console.log('✅ Conectado a MongoDB Atlas');
-  } catch (error) {
-    console.error('❌ Error conectando a MongoDB:', error);
-  }
-};
 
-// Inicializar MongoDB
+    await mongoClient.connect();
+    mongoDB = mongoClient.db(process.env.MONGO_DB); // ✅ GLOBAL
+
+    console.log("✅ Conectado a MongoDB:", mongoDB.databaseName);
+
+    // Debug opcional:
+    const colecciones = await mongoDB.listCollections().toArray();
+    console.log("📂 Colecciones disponibles:", colecciones.map(c => c.name));
+
+  } catch (err) {
+    console.error('❌ Error conectando a MongoDB:', err);
+  }
+}
+
 connectMongo();
 
 //iot
