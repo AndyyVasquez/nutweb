@@ -2157,8 +2157,7 @@ app.get('/api/iot/pedometer/steps/:id_cli', async (req, res) => {
   }
 });
 
-
-// En tu servidor, en el endpoint /api/iot/pedometer/steps/mongo/:id_cli
+// En tu endpoint /api/iot/pedometer/steps/mongo/:id_cli
 app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
   try {
     const { id_cli } = req.params;
@@ -2176,13 +2175,33 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
 
     const collection = mongoDB.collection('actividad_pasos');
 
-    // 🔍 DEBUGGING: Ver todos los documentos primero
-    const todosLosDocumentos = await collection.find({}).toArray();
-    console.log('📚 TODOS los documentos en la colección:', todosLosDocumentos);
+    // 🔍 DEBUGGING COMPLETO
+    try {
+      // Verificar que la colección existe
+      const collections = await mongoDB.listCollections().toArray();
+      console.log('📚 Todas las colecciones:', collections.map(c => c.name));
 
-    // 🔍 DEBUGGING: Ver documentos para este usuario
-    const documentosUsuario = await collection.find({ id_cli: parseInt(id_cli) }).toArray();
-    console.log('👤 Documentos para usuario', id_cli, ':', documentosUsuario);
+      // Contar documentos totales
+      const totalDocs = await collection.countDocuments();
+      console.log('📊 Total documentos en actividad_pasos:', totalDocs);
+
+      // Ver TODOS los documentos
+      const allDocs = await collection.find({}).toArray();
+      console.log('📄 TODOS los documentos:', JSON.stringify(allDocs, null, 2));
+
+      // Ver documentos para este usuario específico
+      const userDocs = await collection.find({ id_cli: parseInt(id_cli) }).toArray();
+      console.log('👤 Documentos para usuario', id_cli, ':', JSON.stringify(userDocs, null, 2));
+
+      // Ver documentos para esta fecha específica
+      if (fecha) {
+        const dateDocs = await collection.find({ fecha: fecha }).toArray();
+        console.log('📅 Documentos para fecha', fecha, ':', JSON.stringify(dateDocs, null, 2));
+      }
+
+    } catch (debugError) {
+      console.error('❌ Error en debugging:', debugError);
+    }
 
     const filter = {
       id_cli: parseInt(id_cli),
@@ -2235,7 +2254,6 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
     });
   }
 });
-
 app.post('/api/iot/pedometer/save', async (req, res) => {
   try {
     const { id_cli, steps, fecha } = req.body;
