@@ -2158,6 +2158,7 @@ app.get('/api/iot/pedometer/steps/:id_cli', async (req, res) => {
 });
 
 // GET /api/iot/pedometer/steps/mongo/:id_cli
+// GET /api/iot/pedometer/steps/mongo/:id_cli - Obtener pasos desde MongoDB
 app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
   try {
     const { id_cli } = req.params;
@@ -2170,24 +2171,23 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
       });
     }
 
+    console.log('👟 Obteniendo pasos de MongoDB para usuario:', id_cli);
+    console.log('🧪 Consulta esperada con fecha:', fecha);
+
     const collection = mongoDB.collection('actividad_pasos');
-    const parsedId = parseInt(id_cli);
-    const cleanFecha = (fecha || new Date().toISOString().split('T')[0]).trim();
 
-    console.log('👟 Obteniendo pasos de MongoDB para usuario:', parsedId);
-    console.log('🧪 Consulta forzada:', { id_cli: parsedId, fecha: cleanFecha });
+    const filter = {
+      id_cli: parseInt(id_cli),
+      ...(fecha && { fecha: fecha })
+    };
 
-    // Debug parcial: solo por ID
-    const docsPorID = await collection.find({ id_cli: parsedId }).toArray();
-    console.log("📄 Docs con id_cli:", docsPorID.length);
+    const documentos = await collection
+      .find(filter)
+      .sort({ timestamp: -1 })
+      .limit(1)
+      .toArray();
 
-    // Consulta final
-    const documentos = await collection.find({
-      id_cli: parsedId,
-      fecha: cleanFecha
-    }).sort({ timestamp: -1 }).limit(1).toArray();
-
-    console.log("📄 Documentos encontrados:", documentos.length, documentos);
+    console.log("📄 Documentos encontrados:", documentos);
 
     const documento = documentos[0];
 
@@ -2207,7 +2207,7 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
       res.json({
         success: true,
         data: {
-          fecha: cleanFecha,
+          fecha: fecha,
           pasos: 0,
           calorias_gastadas: 0,
           distancia_km: 0,
@@ -2226,9 +2226,8 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor escuchando en http://localhost:${PORT}`);
-});
+
+
 
 app.post('/api/iot/pedometer/save', async (req, res) => {
   try {
