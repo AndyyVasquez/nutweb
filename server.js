@@ -542,6 +542,109 @@ const generateSubscriptionToken = (userId, planType, paymentId) => {
   return `SUB${planPrefix}${userId}${timestamp}${random}`;
 };
 
+// POST para obtener la dieta actual del cliente
+router.post('/dieta-actual', (req, res) => {
+  const { idCliente } = req.body;
+
+  if (!idCliente || isNaN(idCliente)) {
+    return res.status(400).json({ error: 'ID de cliente inválido' });
+  }
+
+  // Query para obtener la dieta más reciente del cliente
+  const query = `
+    SELECT 
+      d.id_dieta,
+      d.nombre_dieta,
+      d.objetivo_dieta,
+      d.duracion,
+      d.porcentaje_proteinas,
+      d.porcentaje_carbs,
+      d.porcentaje_grasas,
+      d.calorias_objetivo,
+      d.recomendaciones,
+      d.fecha_inicio as fecha_creacion,
+      tc.id_tiempo,
+      tc.nombre_tiempo,
+      ad.id_alimento_dieta,
+      ad.nombre_alimento,
+      ad.cantidad_gramos,
+      ad.calorias,
+      ad.grupo_alimenticio
+    FROM 
+      dietas d
+    LEFT JOIN 
+      tiempos_comida tc ON d.id_dieta = tc.id_dieta
+    LEFT JOIN 
+      alimentos_dieta ad ON tc.id_tiempo = ad.id_tiempo
+    WHERE 
+      d.id_cli = ?
+    ORDER BY 
+      d.fecha_inicio DESC, 
+      tc.id_tiempo ASC,
+      ad.id_alimento_dieta ASC
+    LIMIT 100
+  `;
+
+  connection.query(query, [idCliente], (err, results) => {
+    if (err) {
+      console.error('Error al obtener dieta actual:', err);
+      return res.status(500).json({ error: 'Error en la base de datos' });
+    }
+
+    if (results.length === 0) {
+      return res.json(null);
+    }
+
+    // Procesar resultados
+    const dietaData = {
+      id_dieta: results[0].id_dieta,
+      nombre_dieta: results[0].nombre_dieta,
+      objetivo_dieta: results[0].objetivo_dieta,
+      duracion: results[0].duracion,
+      porcentaje_proteinas: results[0].porcentaje_proteinas,
+      porcentaje_carbs: results[0].porcentaje_carbs,
+      porcentaje_grasas: results[0].porcentaje_grasas,
+      calorias_objetivo: results[0].calorias_objetivo,
+      recomendaciones: results[0].recomendaciones,
+      fecha_creacion: results[0].fecha_creacion,
+      tiempos: []
+    };
+
+    // Agrupar tiempos y alimentos
+    const tiemposMap = new Map();
+
+    results.forEach(row => {
+      if (!row.id_tiempo) return;
+
+      if (!tiemposMap.has(row.id_tiempo)) {
+        tiemposMap.set(row.id_tiempo, {
+          id_tiempo: row.id_tiempo,
+          nombre_tiempo: row.nombre_tiempo,
+          alimentos: []
+        });
+      }
+
+      if (row.id_alimento_dieta) {
+        tiemposMap.get(row.id_tiempo).alimentos.push({
+          id_alimento_dieta: row.id_alimento_dieta,
+          nombre_alimento: row.nombre_alimento,
+          cantidad_gramos: row.cantidad_gramos,
+          calorias: row.calorias,
+          grupo_alimenticio: row.grupo_alimenticio
+        });
+      }
+    });
+
+    // Ordenar por nombre de tiempo
+    dietaData.tiempos = Array.from(tiemposMap.values()).sort((a, b) => {
+      const orden = ['desayuno', 'colacion1', 'comida', 'colacion2', 'cena'];
+      return orden.indexOf(a.nombre_tiempo) - orden.indexOf(b.nombre_tiempo);
+    });
+
+    res.json(dietaData);
+  });
+});
+
 // FUNCIÓN: Guardar token en base de datos
 const saveSubscriptionToken = async (userId, token, paymentId, planType) => {
   try {
@@ -1042,11 +1145,7 @@ const connectMongo = async () => {
 // Inicializar MongoDB
 connectMongo();
 
-
-// =============================================================================
-// CONFIGURACIÓN IOT - BÁSCULA INTELIGENTE Y PODÓMETRO
-// =============================================================================
-
+//iot
 // Estado de la báscula
 let scaleState = {
   connected: false,
@@ -1514,6 +1613,9 @@ app.get('/api/comidas/mongo/:id_cli', async (req, res) => {
     });
   }
 });
+
+
+
 
 // GET /api/comidas/stats/:id_cli - Obtener estadísticas detalladas
 app.get('/api/comidas/stats/:id_cli', async (req, res) => {
