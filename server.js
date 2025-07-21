@@ -1133,36 +1133,46 @@ let mongoDB = null;
 //conectar mongodb
 async function connectMongo() {
   try {
+    console.log("🔄 Conectando a MongoDB...");
+    console.log("URI:", process.env.MONGO_URI?.substring(0, 30) + "...");
+    console.log("DB Name:", process.env.MONGO_DB);
+    
     const mongoClient = new MongoClient(process.env.MONGO_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true
     });
 
     await mongoClient.connect();
+    console.log("✅ Cliente MongoDB conectado");
+    
     mongoDB = mongoClient.db(process.env.MONGO_DB);
+    console.log("✅ Base de datos seleccionada:", mongoDB.databaseName);
 
-    console.log("✅ Conectado a MongoDB:", mongoDB.databaseName);
+    // Ping para verificar conexión
+    await mongoClient.db("admin").command({ ping: 1 });
+    console.log("✅ Ping exitoso a MongoDB");
 
-    // 🔍 DEBUGGING MEJORADO
-    try {
-      const colecciones = await mongoDB.listCollections().toArray();
-      console.log("📂 Colecciones disponibles:", colecciones.map(c => c.name));
+    // Listar colecciones
+    const colecciones = await mongoDB.listCollections().toArray();
+    console.log("📂 Colecciones encontradas:", colecciones.map(c => c.name));
 
-      // Verificar actividad_pasos específicamente
+    // Verificar actividad_pasos específicamente
+    const actividadExists = colecciones.find(c => c.name === 'actividad_pasos');
+    if (actividadExists) {
+      console.log("✅ Colección actividad_pasos encontrada");
       const actividadCollection = mongoDB.collection('actividad_pasos');
       const count = await actividadCollection.countDocuments();
       console.log("📊 Total documentos en actividad_pasos:", count);
-
+      
       if (count > 0) {
         const samples = await actividadCollection.find({}).limit(3).toArray();
-        console.log("📋 Documentos de muestra en actividad_pasos:");
+        console.log("📋 Documentos de muestra:");
         samples.forEach((doc, index) => {
           console.log(`  ${index + 1}. id_cli: ${doc.id_cli}, fecha: ${doc.fecha}, pasos: ${doc.pasos}`);
         });
       }
-
-    } catch (debugError) {
-      console.error("❌ Error en debugging de colecciones:", debugError);
+    } else {
+      console.log("❌ Colección actividad_pasos NO encontrada");
     }
 
   } catch (err) {
@@ -1171,6 +1181,41 @@ async function connectMongo() {
 }
 connectMongo();
 
+// DEBUGGING TEMPORAL - Agregar después de connectMongo()
+setTimeout(async () => {
+  try {
+    console.log("🔍 === DEBUGGING COMPLETO ===");
+    console.log("MONGO_URI:", process.env.MONGO_URI);
+    console.log("MONGO_DB:", process.env.MONGO_DB);
+    
+    if (mongoDB) {
+      console.log("Database name:", mongoDB.databaseName);
+      
+      // Listar TODAS las colecciones
+      const admin = mongoDB.admin();
+      const result = await admin.listCollections().toArray();
+      console.log("Colecciones ADMIN:", result.map(c => c.name));
+      
+      // Método alternativo
+      const collections = await mongoDB.collections();
+      console.log("Colecciones método 2:", collections.map(c => c.collectionName));
+      
+      // Verificar actividad_pasos directamente
+      try {
+        const actividadCollection = mongoDB.collection('actividad_pasos');
+        const stats = await actividadCollection.stats();
+        console.log("Stats actividad_pasos:", stats);
+      } catch (statsError) {
+        console.log("Error obteniendo stats:", statsError.message);
+      }
+      
+    } else {
+      console.log("❌ mongoDB es null!");
+    }
+  } catch (debugError) {
+    console.error("❌ Error en debugging:", debugError);
+  }
+}, 5000); // Esperar 5 segundos después de conectar
 //iot
 // Estado de la báscula
 let scaleState = {
