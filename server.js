@@ -2151,7 +2151,6 @@ app.get('/api/iot/pedometer/steps/:id_cli', async (req, res) => {
   }
 });
 
-// GET /api/iot/pedometer/steps/mongo/:id_cli - Obtener pasos desde MongoDB
 app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
   try {
     const { id_cli } = req.params;
@@ -2165,53 +2164,76 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
     }
 
     console.log('👟 Obteniendo pasos de MongoDB para usuario:', id_cli);
-
     const collection = mongoDB.collection('actividad_pasos');
-    
- if (fecha) {
-  // Obtener el documento más reciente para ese usuario y fecha
-  console.log("🧪 Consulta:", {
-  id_cli: parseInt(id_cli),
-  fecha: fecha
-});
-const documentos = await collection.find({
-  id_cli: parseInt(id_cli)
-}).sort({ timestamp: -1 }).limit(5).toArray();
 
-console.log("📄 Documentos por id_cli:", documentos);
+    if (fecha) {
+      const parsedId = parseInt(id_cli);
+      const documentos = await collection.find({
+        id_cli: parsedId,
+        fecha: fecha
+      }).sort({ timestamp: -1 }).limit(1).toArray();
 
+      console.log("🧪 Consulta:", { id_cli: parsedId, fecha });
+      console.log("📄 Documentos encontrados:", documentos);
 
-  console.log("📄 Documentos encontrados:", documentos);
+      const documento = documentos[0];
 
-  const documento = documentos[0];
-
-  if (documento) {
-    res.json({
-      success: true,
-      data: {
-        fecha: documento.fecha,
-        pasos: documento.pasos,
-        calorias_gastadas: documento.calorias_gastadas,
-        distancia_km: documento.distancia_km,
-        hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
-        dispositivo: documento.dispositivo
+      if (documento) {
+        res.json({
+          success: true,
+          data: {
+            fecha: documento.fecha,
+            pasos: documento.pasos,
+            calorias_gastadas: documento.calorias_gastadas,
+            distancia_km: documento.distancia_km,
+            hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
+            dispositivo: documento.dispositivo
+          }
+        });
+      } else {
+        res.json({
+          success: true,
+          data: {
+            fecha,
+            pasos: 0,
+            calorias_gastadas: 0,
+            distancia_km: 0,
+            hora_ultima_actualizacion: null,
+            dispositivo: null
+          }
+        });
       }
-    });
-  } else {
-    res.json({
-      success: true,
-      data: {
-        fecha: fecha,
-        pasos: 0,
-        calorias_gastadas: 0,
-        distancia_km: 0,
-        hora_ultima_actualizacion: null,
-        dispositivo: null
-      }
-    });
-  }
-}
 
+    } else {
+      // si no se da una fecha, obtener últimos X días
+      const parsedId = parseInt(id_cli);
+      const fechaInicio = new Date();
+      fechaInicio.setDate(fechaInicio.getDate() - parseInt(dias));
+      const fechaInicioStr = fechaInicio.toISOString().split('T')[0];
+
+      const documentos = await collection.find({
+        id_cli: parsedId,
+        fecha: { $gte: fechaInicioStr }
+      }).sort({ fecha: -1 }).toArray();
+
+      const totalPasos = documentos.reduce((sum, d) => sum + (d.pasos || 0), 0);
+      const totalCalorias = documentos.reduce((sum, d) => sum + (d.calorias_gastadas || 0), 0);
+      const totalDistancia = documentos.reduce((sum, d) => sum + (d.distancia_km || 0), 0);
+      const promedioPasos = documentos.length ? Math.round(totalPasos / documentos.length) : 0;
+
+      res.json({
+        success: true,
+        data: documentos,
+        estadisticas: {
+          dias_consultados: parseInt(dias),
+          total_pasos: totalPasos,
+          total_calorias: totalCalorias,
+          total_distancia_km: totalDistancia.toFixed(2),
+          promedio_pasos_dia: promedioPasos,
+          dias_activos: documentos.length
+        }
+      });
+    }
 
   } catch (error) {
     console.error('❌ Error obteniendo pasos de MongoDB:', error);
@@ -2222,6 +2244,7 @@ console.log("📄 Documentos por id_cli:", documentos);
     });
   }
 });
+
 app.post('/api/iot/pedometer/save', async (req, res) => {
   try {
     const { id_cli, steps, fecha } = req.body;
@@ -2233,15 +2256,39 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
       });
     }
 
-    const targetDate = fecha || new Date().toISOString().split('T')[0];
-    
-    await saveStepsToDatabase(steps, id_cli);
-    
+    const today = fecha || new Date().toISOString().split('T')[0];
+    const horaActual = new Date().toTimeString().split(' ')[0].slice(0, 5);
+    const caloriasGastadas = Math.round(steps * 0.04);
+    const distanciaKm = +(steps * 0.75 / 1000).toFixed(2); // 75cm por paso
+
+    if (!mongoDB) {
+      return res.status(500).json({ success: false, message: 'MongoDB no disponible' });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+
+    // Actualiza si ya existe, si no inserta
+    await collection.updateOne(
+      { id_cli: parseInt(id_cli), fecha: today },
+      {
+        $set: {
+          pasos: steps,
+          calorias_gastadas: caloriasGastadas,
+          distancia_km: distanciaKm,
+          hora_ultima_actualizacion: horaActual,
+          dispositivo: 'ESP32',
+          estado: 'activo',
+          timestamp: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
     res.json({
       success: true,
       message: 'Pasos guardados exitosamente',
-      steps: steps,
-      date: targetDate
+      steps,
+      date: today
     });
 
   } catch (error) {
@@ -2253,6 +2300,7 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
     });
   }
 });
+
 
 // GET /api/iot/scale/weight - Obtener peso actual
 app.get('/api/iot/scale/weight', (req, res) => {
