@@ -2173,7 +2173,8 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
   const documentos = await collection.find({
     id_cli: parseInt(id_cli),
     fecha: fecha
-  }).sort({ timestamp: -1 }).limit(1).toArray();
+  }).toArray();
+  
 
   console.log("📄 Documentos encontrados:", documentos);
 
