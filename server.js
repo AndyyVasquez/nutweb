@@ -36,6 +36,9 @@ const dbConfig = {
   database: process.env.DB_NAME
 };
 
+// Estado global de podómetros conectados
+let connectedPedometers = new Map();
+
 const mercadopago = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN || 'TEST-3273803796754942-071504-bb24735cf345727f37edd8cf177909da-398459562', // Reemplaza con tu token real
   options: {
@@ -2372,6 +2375,300 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
   }
 });
 
+
+app.post('/api/iot/pedometer/assign', async (req, res) => {
+  try {
+    const { user_id, user_name, device_id } = req.body;
+    
+    if (!user_id || !user_name) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id y user_name son requeridos'
+      });
+    }
+    
+    // Verificar que el usuario existe en la BD
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      const [userRows] = await connection.execute(
+        'SELECT id_cli, CONCAT(nombre_cli, " ", app_cli) as nombre FROM clientes WHERE id_cli = ?',
+        [user_id]
+      );
+      
+      if (userRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Usuario no encontrado'
+        });
+      }
+      
+      const user = userRows[0];
+      
+      // Registrar asignación
+      connectedPedometers.set(device_id || 'default', {
+        user_id: user_id,
+        user_name: user_name,
+        assigned_at: new Date(),
+        device_id: device_id || 'default',
+        status: 'active'
+      });
+      
+      console.log(`👟 Podómetro asignado a usuario ${user_id} (${user_name})`);
+      
+      // Si tienes WebSocket server, enviar comando al ESP32
+      const assignCommand = {
+        type: 'assign_user',
+        user_id: user_id,
+        user_name: user_name,
+        device_id: device_id || 'default'
+      };
+      
+      // Enviar a todos los clientes WebSocket (incluyendo ESP32)
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(assignCommand));
+        }
+      });
+      
+      res.json({
+        success: true,
+        message: 'Usuario asignado al podómetro exitosamente',
+        assignment: {
+          user_id: user_id,
+          user_name: user_name,
+          device_id: device_id || 'default',
+          assigned_at: new Date().toISOString()
+        }
+      });
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error asignando podómetro:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/iot/pedometer/release - Liberar podómetro
+app.post('/api/iot/pedometer/release', async (req, res) => {
+  try {
+    const { device_id, user_id } = req.body;
+    
+    const deviceKey = device_id || 'default';
+    const assignment = connectedPedometers.get(deviceKey);
+    
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: 'No hay podómetro asignado'
+      });
+    }
+    
+    // Verificar que el usuario que libera es el mismo que está asignado
+    if (user_id && assignment.user_id !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para liberar este podómetro'
+      });
+    }
+    
+    console.log(`👟 Liberando podómetro de usuario ${assignment.user_id} (${assignment.user_name})`);
+    
+    // Remover asignación
+    connectedPedometers.delete(deviceKey);
+    
+    // Enviar comando de liberación al ESP32
+    const releaseCommand = {
+      type: 'release_user',
+      device_id: deviceKey,
+      former_user_id: assignment.user_id
+    };
+    
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(releaseCommand));
+      }
+    });
+    
+    res.json({
+      success: true,
+      message: 'Podómetro liberado exitosamente',
+      former_assignment: assignment
+    });
+    
+  } catch (error) {
+    console.error('❌ Error liberando podómetro:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/iot/pedometer/assignments - Ver asignaciones activas
+app.get('/api/iot/pedometer/assignments', (req, res) => {
+  try {
+    const assignments = Array.from(connectedPedometers.values());
+    
+    res.json({
+      success: true,
+      total_assignments: assignments.length,
+      assignments: assignments.map(assignment => ({
+        user_id: assignment.user_id,
+        user_name: assignment.user_name,
+        device_id: assignment.device_id,
+        assigned_at: assignment.assigned_at,
+        status: assignment.status,
+        duration_minutes: Math.round((new Date() - assignment.assigned_at) / (1000 * 60))
+      }))
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo asignaciones:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo asignaciones',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/iot/pedometer/available - Verificar podómetros disponibles
+app.get('/api/iot/pedometer/available', (req, res) => {
+  try {
+    // Contar clientes WebSocket conectados (incluyendo ESP32)
+    const totalConnected = wss.clients.size;
+    const assignedDevices = connectedPedometers.size;
+    const availableDevices = Math.max(0, totalConnected - assignedDevices);
+    
+    res.json({
+      success: true,
+      total_devices: totalConnected,
+      assigned_devices: assignedDevices,
+      available_devices: availableDevices,
+      devices: Array.from(connectedPedometers.keys())
+    });
+    
+  } catch (error) {
+    console.error('❌ Error verificando disponibilidad:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verificando disponibilidad',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/iot/pedometer/command - Enviar comandos específicos al podómetro
+app.post('/api/iot/pedometer/command', async (req, res) => {
+  try {
+    const { command, user_id, device_id, parameters } = req.body;
+    
+    if (!command) {
+      return res.status(400).json({
+        success: false,
+        message: 'Comando es requerido'
+      });
+    }
+    
+    const deviceKey = device_id || 'default';
+    const assignment = connectedPedometers.get(deviceKey);
+    
+    // Verificar que hay una asignación activa para comandos que requieren usuario
+    if (['start', 'stop', 'reset'].includes(command) && !assignment) {
+      return res.status(400).json({
+        success: false,
+        message: 'No hay usuario asignado al podómetro'
+      });
+    }
+    
+    // Verificar que el usuario que envía el comando es el propietario
+    if (assignment && user_id && assignment.user_id !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para controlar este podómetro'
+      });
+    }
+    
+    console.log(`👟 Enviando comando '${command}' al podómetro ${deviceKey}`);
+    
+    // Preparar comando para el ESP32
+    const commandPayload = {
+      type: 'pedometer_command',
+      command: command,
+      device_id: deviceKey,
+      user_id: assignment ? assignment.user_id : null,
+      parameters: parameters || {},
+      timestamp: new Date().toISOString()
+    };
+    
+    // Enviar a ESP32 via WebSocket
+    let commandSent = false;
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(commandPayload));
+        commandSent = true;
+      }
+    });
+    
+    if (!commandSent) {
+      return res.status(500).json({
+        success: false,
+        message: 'No hay dispositivos conectados para recibir el comando'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: `Comando '${command}' enviado exitosamente`,
+      command: command,
+      device_id: deviceKey,
+      target_user: assignment ? assignment.user_name : null
+    });
+    
+  } catch (error) {
+    console.error('❌ Error enviando comando:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error enviando comando',
+      error: error.message
+    });
+  }
+});
+
+// Middleware para limpiar asignaciones expiradas (ejecutar cada hora)
+setInterval(() => {
+  const now = new Date();
+  const ASSIGNMENT_TIMEOUT = 6 * 60 * 60 * 1000; // 6 horas
+  
+  for (const [deviceId, assignment] of connectedPedometers.entries()) {
+    if (now - assignment.assigned_at > ASSIGNMENT_TIMEOUT) {
+      console.log(`⏰ Liberando podómetro ${deviceId} por timeout`);
+      connectedPedometers.delete(deviceId);
+      
+      // Notificar liberación por timeout
+      const timeoutCommand = {
+        type: 'assignment_timeout',
+        device_id: deviceId,
+        former_user_id: assignment.user_id
+      };
+      
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(timeoutCommand));
+        }
+      });
+    }
+  }
+}, 60 * 60 * 1000); // Cada hora
 
 // GET /api/iot/scale/weight - Obtener peso actual
 app.get('/api/iot/scale/weight', (req, res) => {
