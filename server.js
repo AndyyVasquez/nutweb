@@ -2731,6 +2731,131 @@ app.post('/api/iot/pedometer/command', async (req, res) => {
   }
 });
 
+// AGREGAR este endpoint a tu server.js para debugging MongoDB:
+
+app.get('/api/debug/mongodb/:id_cli', async (req, res) => {
+  try {
+    const { id_cli } = req.params;
+    
+    console.log('🔍 === DEBUGGING MONGODB ===');
+    console.log('Usuario solicitado:', id_cli);
+    
+    if (!mongoDB) {
+      return res.json({ 
+        success: false, 
+        error: 'MongoDB no conectado',
+        debug: {
+          mongoDB: null,
+          connected: false
+        }
+      });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+    
+    // 1. Contar documentos totales
+    const totalDocs = await collection.countDocuments();
+    console.log('📊 Total documentos:', totalDocs);
+    
+    // 2. Ver TODOS los documentos
+    const allDocs = await collection.find({}).toArray();
+    console.log('📄 Todos los documentos:', allDocs);
+    
+    // 3. Documentos para este usuario
+    const userDocs = await collection.find({ id_cli: parseInt(id_cli) }).toArray();
+    console.log('👤 Documentos del usuario', id_cli, ':', userDocs);
+    
+    // 4. Documentos de HOY
+    const today = new Date().toISOString().split('T')[0];
+    const todayDocs = await collection.find({ fecha: today }).toArray();
+    console.log('📅 Documentos de hoy (' + today + '):', todayDocs);
+    
+    // 5. Documentos del usuario HOY
+    const userTodayDocs = await collection.find({ 
+      id_cli: parseInt(id_cli), 
+      fecha: today 
+    }).toArray();
+    console.log('👤📅 Documentos del usuario hoy:', userTodayDocs);
+    
+    // 6. Últimos 10 documentos por timestamp
+    const recentDocs = await collection.find({})
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .toArray();
+    console.log('🕐 Últimos 10 documentos:', recentDocs);
+
+    res.json({
+      success: true,
+      debug: {
+        database_name: mongoDB.databaseName,
+        collection_name: 'actividad_pasos',
+        total_documents: totalDocs,
+        all_documents: allDocs,
+        user_documents: userDocs,
+        today_documents: todayDocs,
+        user_today_documents: userTodayDocs,
+        recent_documents: recentDocs,
+        searched_user_id: parseInt(id_cli),
+        searched_date: today,
+        current_time: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error en debugging:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      debug: {
+        error_stack: error.stack
+      }
+    });
+  }
+});
+
+// ENDPOINT para insertar datos de prueba
+app.post('/api/debug/insert-test-data/:id_cli', async (req, res) => {
+  try {
+    const { id_cli } = req.params;
+    const today = new Date().toISOString().split('T')[0];
+    
+    if (!mongoDB) {
+      return res.json({ success: false, error: 'MongoDB no conectado' });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+    
+    const testDocument = {
+      id_cli: parseInt(id_cli),
+      fecha: today,
+      pasos: 1234,
+      calorias_gastadas: 49,
+      distancia_km: 0.93,
+      hora_ultima_actualizacion: new Date().toTimeString().split(' ')[0].slice(0, 5),
+      dispositivo: 'ESP32_TEST',
+      estado: 'activo',
+      timestamp: new Date()
+    };
+
+    const result = await collection.insertOne(testDocument);
+    
+    console.log('✅ Documento de prueba insertado:', result.insertedId);
+    
+    res.json({
+      success: true,
+      message: 'Documento de prueba insertado',
+      document_id: result.insertedId,
+      document: testDocument
+    });
+
+  } catch (error) {
+    console.error('❌ Error insertando datos de prueba:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 // Middleware para limpiar asignaciones expiradas (ejecutar cada hora)
 setInterval(() => {
