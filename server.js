@@ -2319,14 +2319,18 @@ app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
     });
   }
 });
+
+// REEMPLAZA COMPLETAMENTE tu endpoint POST /api/iot/pedometer/save
+
 app.post('/api/iot/pedometer/save', async (req, res) => {
   try {
     const { id_cli, steps, fecha } = req.body;
     
     console.log('💾 === GUARDANDO PASOS EN BD ===');
     console.log('📥 Datos recibidos:', { id_cli, steps, fecha });
+    console.log('📥 Tipo de datos:', typeof id_cli, typeof steps, typeof fecha);
     
-    if (!id_cli || steps === undefined) {
+    if (!id_cli || steps === undefined || steps === null) {
       console.log('❌ Datos incompletos:', { id_cli, steps, fecha });
       return res.status(400).json({
         success: false,
@@ -2341,7 +2345,7 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
 
     console.log('📊 Datos calculados:', {
       id_cli: parseInt(id_cli),
-      pasos: steps,
+      pasos: parseInt(steps),
       calorias_gastadas: caloriasGastadas,
       distancia_km: distanciaKm,
       fecha: today,
@@ -2353,29 +2357,35 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
       console.log('❌ MongoDB no está conectado');
       return res.status(500).json({ 
         success: false, 
-        message: 'Base de datos no disponible' 
+        message: 'Base de datos MongoDB no disponible' 
       });
     }
 
     console.log('✅ MongoDB conectado, base de datos:', mongoDB.databaseName);
 
-    // === GUARDAR EN MONGODB ===
+    // === GUARDAR EN MONGODB PRIMERO ===
+    let mongoResult = null;
     try {
       const collection = mongoDB.collection('actividad_pasos');
       console.log('📂 Usando colección: actividad_pasos');
 
       // Verificar si ya existe registro para hoy
-      const existingDoc = await collection.findOne({
+      const filter = {
         id_cli: parseInt(id_cli),
         fecha: today
-      });
-
-      console.log('🔍 Documento existente:', existingDoc ? 'SÍ' : 'NO');
+      };
+      
+      console.log('🔍 Buscando documento existente con filtro:', filter);
+      const existingDoc = await collection.findOne(filter);
+      console.log('🔍 Documento existente encontrado:', existingDoc ? 'SÍ' : 'NO');
+      if (existingDoc) {
+        console.log('📄 Documento existente:', JSON.stringify(existingDoc, null, 2));
+      }
 
       const documentoMongo = {
         id_cli: parseInt(id_cli),
         fecha: today,
-        pasos: steps,
+        pasos: parseInt(steps),
         calorias_gastadas: caloriasGastadas,
         distancia_km: distanciaKm,
         hora_ultima_actualizacion: horaActual,
@@ -2384,16 +2394,15 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
         timestamp: new Date()
       };
 
-      console.log('📄 Documento a guardar:', documentoMongo);
+      console.log('📄 Documento a guardar/actualizar:', JSON.stringify(documentoMongo, null, 2));
 
-      let result;
       if (existingDoc) {
         // Actualizar documento existente
-        result = await collection.updateOne(
+        const updateResult = await collection.updateOne(
           { _id: existingDoc._id },
           { 
             $set: {
-              pasos: steps,
+              pasos: parseInt(steps),
               calorias_gastadas: caloriasGastadas,
               distancia_km: distanciaKm,
               hora_ultima_actualizacion: horaActual,
@@ -2401,39 +2410,62 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
             }
           }
         );
-        console.log('🔄 Documento actualizado, matched:', result.matchedCount, 'modified:', result.modifiedCount);
+        
+        console.log('🔄 Resultado actualización:', {
+          acknowledged: updateResult.acknowledged,
+          matchedCount: updateResult.matchedCount,
+          modifiedCount: updateResult.modifiedCount
+        });
+        
+        mongoResult = { updated: true, id: existingDoc._id };
       } else {
         // Crear nuevo documento
-        result = await collection.insertOne(documentoMongo);
-        console.log('➕ Nuevo documento creado, ID:', result.insertedId);
+        const insertResult = await collection.insertOne(documentoMongo);
+        
+        console.log('➕ Resultado inserción:', {
+          acknowledged: insertResult.acknowledged,
+          insertedId: insertResult.insertedId
+        });
+        
+        mongoResult = { inserted: true, id: insertResult.insertedId };
       }
 
-      // Verificar que se guardó correctamente
-      const verifyDoc = await collection.findOne({
-        id_cli: parseInt(id_cli),
-        fecha: today
-      });
-
-      console.log('✅ Verificación post-guardado:', verifyDoc ? 'DOCUMENTO ENCONTRADO' : 'ERROR: NO ENCONTRADO');
+      // VERIFICACIÓN POST-GUARDADO
+      console.log('🔍 === VERIFICACIÓN POST-GUARDADO ===');
+      const verifyDoc = await collection.findOne(filter);
       
       if (verifyDoc) {
-        console.log('📋 Documento verificado:', {
-          id: verifyDoc._id,
-          pasos: verifyDoc.pasos,
-          fecha: verifyDoc.fecha,
-          hora: verifyDoc.hora_ultima_actualizacion
-        });
+        console.log('✅ VERIFICACIÓN EXITOSA - Documento encontrado:');
+        console.log('📋 ID:', verifyDoc._id);
+        console.log('📋 Pasos:', verifyDoc.pasos);
+        console.log('📋 Fecha:', verifyDoc.fecha);
+        console.log('📋 Hora:', verifyDoc.hora_ultima_actualizacion);
+        console.log('📋 Timestamp:', verifyDoc.timestamp);
+      } else {
+        console.log('❌ VERIFICACIÓN FALLIDA - Documento NO encontrado después del guardado');
+        throw new Error('El documento no se pudo verificar después del guardado');
       }
+
+      // VERIFICAR TOTAL DE DOCUMENTOS EN LA COLECCIÓN
+      const totalDocs = await collection.countDocuments();
+      console.log('📊 Total documentos en actividad_pasos:', totalDocs);
+      
+      // MOSTRAR ÚLTIMOS 3 DOCUMENTOS
+      const recentDocs = await collection.find({}).sort({timestamp: -1}).limit(3).toArray();
+      console.log('📄 Últimos 3 documentos:');
+      recentDocs.forEach((doc, index) => {
+        console.log(`  ${index + 1}. ID: ${doc._id}, Usuario: ${doc.id_cli}, Pasos: ${doc.pasos}, Fecha: ${doc.fecha}`);
+      });
 
     } catch (mongoError) {
       console.error('❌ Error específico de MongoDB:', mongoError);
-      return res.status(500).json({
-        success: false,
-        message: 'Error guardando en MongoDB: ' + mongoError.message
-      });
+      console.error('❌ Stack trace:', mongoError.stack);
+      
+      // Continuar con MySQL aunque falle MongoDB
+      console.log('⚠️ Continuando con MySQL...');
     }
 
-    // === TAMBIÉN GUARDAR EN MYSQL (OPCIONAL) ===
+    // === GUARDAR EN MYSQL (BACKUP) ===
     try {
       const connection = await mysql.createConnection(dbConfig);
       
@@ -2472,21 +2504,32 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
     }
 
     console.log('💾 === GUARDADO COMPLETADO ===');
+    console.log('✅ MongoDB:', mongoResult ? 'EXITOSO' : 'FALLÓ');
+    console.log('✅ MySQL: COMPLETADO');
 
     res.json({
       success: true,
       message: 'Pasos guardados exitosamente',
-      steps,
+      steps: parseInt(steps),
       date: today,
-      saved_to: ['mongodb', 'mysql']
+      saved_to: mongoResult ? ['mongodb', 'mysql'] : ['mysql'],
+      mongo_result: mongoResult,
+      debug: {
+        received_data: { id_cli, steps, fecha },
+        processed_data: { id_cli: parseInt(id_cli), steps: parseInt(steps), fecha: today },
+        mongo_connected: !!mongoDB,
+        database_name: mongoDB ? mongoDB.databaseName : null
+      }
     });
 
   } catch (error) {
     console.error('❌ Error general en save endpoint:', error);
+    console.error('❌ Stack trace completo:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Error interno del servidor',
-      error: error.message
+      error: error.message,
+      stack: error.stack
     });
   }
 });
