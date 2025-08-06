@@ -3068,8 +3068,8 @@ app.post('/api/login', async (req, res) => {
 
     try {
       // Buscar en administradores
-      const [adminResults] = await connection.execute(
-        'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo as correo, password as password FROM administradores WHERE correo = ?',
+          const [adminResults] = await connection.execute(
+        'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo, password FROM administradores WHERE correo = ?',
         [correo]
       );
 
@@ -3080,8 +3080,8 @@ app.post('/api/login', async (req, res) => {
 
       // Buscar en nutriólogos
       if (!user) {
-        const [nutResults] = await connection.execute(
-          'SELECT id_nut as id, tipo_usu, CONCAT(nombre_nut, " ", app_nut, " ", apm_nut) as nombre, correo_nut as correo, password_nut as password, cedula_nut, especialidad_nut, telefono_nut, activo, tiene_acceso FROM nutriologos WHERE correo_nut = ?',
+      const [nutResults] = await connection.execute(
+          'SELECT id_nut as id, tipo_usu, CONCAT(nombre_nut, " ", app_nut, " ", apm_nut) as nombre, correo, password, cedula_nut, especialidad_nut, telefono_nut, activo, tiene_acceso FROM nutriologos WHERE correo = ?',
           [correo]
         );
 
