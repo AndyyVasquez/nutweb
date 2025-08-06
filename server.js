@@ -39,7 +39,7 @@ const dbConfig = {
   database: process.env.DB_NAME
 };
 
-app.use('/api', apiRoutes);
+// app.use('/api', apiRoutes);
 
 // Estado global de podómetros conectados
 let connectedPedometers = new Map();
