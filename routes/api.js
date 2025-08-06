@@ -1,12 +1,13 @@
+require('dotenv').config();
 const express = require('express');
 const router = express.Router();
+const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const Buffer = require('buffer').Buffer;
-const mysql = require('mysql2/promise');
-const { MongoClient } = require('mongodb');
 
+// Configuración de base de datos desde variables de entorno
 const dbConfig = {
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
@@ -14,21 +15,39 @@ const dbConfig = {
   database: process.env.DB_NAME
 };
 
-async function getMongoConnection() {
-  const client = new MongoClient(process.env.MONGO_URI);
-  await client.connect();
-  return client.db(process.env.MONGO_DB);
-}
+app.use(cors({
+  origin: [
+    '*'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true
+}));
+
+app.use(express.json());
+// Pool de conexiones MySQL
+const pool = mysql.createPool(dbConfig);
+
+// Función para conectar a MongoDB (se importará desde server.js)
+let connectToMongo;
+
+// Función para inicializar la conexión MongoDB
+const initMongoDB = (mongoConnection) => {
+  connectToMongo = mongoConnection;
+};
+
 // Obtener pasos por usuario
 router.get('/pasos/:id_cli', async (req, res) => {
   const { id_cli } = req.params;
+
   try {
-    const db = await getMongoConnection();
+    const db = await connectToMongo();
     const pasos = await db
       .collection('pasos')
       .find({ id_cli: parseInt(id_cli) })
-      .sort({ fecha: 1 })
+      .sort({ fecha: 1 }) // Opcional: ordenar por fecha ascendente
       .toArray();
+
     res.json(pasos);
   } catch (error) {
     console.error('Error al obtener pasos:', error);
@@ -39,26 +58,35 @@ router.get('/pasos/:id_cli', async (req, res) => {
 // Obtener dietas por id de cliente
 router.get('/obdietas/:id_cliente', async (req, res) => {
   const idCliente = req.params.id_cliente;
+
+  const query = `
+    SELECT 
+      d.id_dieta,
+      d.nombre_dieta,
+      d.objetivo_dieta,
+      d.duracion,
+      d.calorias_objetivo,
+      d.porcentaje_proteinas,
+      d.porcentaje_carbs,
+      d.porcentaje_grasas,
+      d.fecha_inicio,
+      d.fecha_fin,
+      d.recomendaciones
+    FROM dietas d
+    WHERE d.id_cli = ?
+  `;
+
   try {
-    const connection = await mysql.createConnection(dbConfig);
-    try {
-      const query = `SELECT ...`;
-      const [results] = await connection.execute(query, [idCliente]);
-      res.json(results);
-    } finally {
-      await connection.end();
-    }
-  } catch (error) {
-    console.error('Error al obtener dietas por cliente:', error);
+    const [results] = await pool.execute(query, [idCliente]);
+    res.json(results);
+  } catch (err) {
+    console.error('Error al obtener dietas por cliente:', err);
     res.status(500).json({ error: 'Error al obtener las dietas del cliente' });
   }
 });
 
-
-
-
-
-router.put('/nutriologos/:id/verificar', (req, res) => {
+// Verificar nutriólogo
+router.put('/nutriologos/:id/verificar', async (req, res) => {
   const id = req.params.id;
   const fechaHoy = new Date().toISOString().split('T')[0]; // formato 'YYYY-MM-DD'
 
@@ -70,22 +98,22 @@ router.put('/nutriologos/:id/verificar', (req, res) => {
     WHERE id_nut = ?
   `;
 
-  connection.query(sql, ['aprobado', fechaHoy, id], (error, result) => {
-    if (error) {
-      console.error('Error al actualizar verificado:', error);
-      return res.status(500).json({ message: 'Error del servidor' });
-    }
+  try {
+    const [result] = await pool.execute(sql, ['aprobado', fechaHoy, id]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Nutriólogo no encontrado' });
     }
 
     return res.json({ message: 'Nutriólogo aprobado correctamente' });
-  });
+  } catch (error) {
+    console.error('Error al actualizar verificado:', error);
+    return res.status(500).json({ message: 'Error del servidor' });
+  }
 });
 
-
-router.put('/nutriologos/:id/denegar', (req, res) => {
+// Denegar nutriólogo
+router.put('/nutriologos/:id/denegar', async (req, res) => {
   const id = req.params.id;
 
   const sql = `
@@ -95,33 +123,30 @@ router.put('/nutriologos/:id/denegar', (req, res) => {
     WHERE id_nut = ?
   `;
 
-  connection.query(sql, [id], (error, result) => {
-    if (error) {
-      console.error('Error al denegar nutriólogo:', error);
-      return res.status(500).json({ message: 'Error del servidor' });
-    }
+  try {
+    const [result] = await pool.execute(sql, [id]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Nutriólogo no encontrado' });
     }
 
     return res.json({ message: 'Nutriólogo rechazado correctamente' });
-  });
+  } catch (error) {
+    console.error('Error al denegar nutriólogo:', error);
+    return res.status(500).json({ message: 'Error del servidor' });
+  }
 });
-
-
 
 // Ruta para obtener todos los nutriólogos
-router.get('/nutriologos', (req, res) => {
-  connection.query('SELECT * FROM nutriologos', (error, rows) => {
-    if (error) {
-      console.error('Error en /nutriologos:', error);
-      return res.status(500).json({ message: 'Error en el servidor' });
-    }
+router.get('/nutriologos', async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT * FROM nutriologos');
     res.json(rows);
-  });
+  } catch (error) {
+    console.error('Error en /nutriologos:', error);
+    return res.status(500).json({ message: 'Error en el servidor' });
+  }
 });
-
 
 // Registro de nutriólogo
 router.post('/nutriologos/registro', async (req, res) => {
@@ -146,51 +171,43 @@ router.post('/nutriologos/registro', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    db.query(
-      sql,
-      [
-        nombre_nut,
-        app_nut,
-        apm_nut,
-        correo,
-        hashedPassword,
-        cedula_nut,
-        especialidad_nut,
-        telefono_nut,
-        token_vinculacion,
-      ],
-      (err, result) => {
-        if (err) {
-          console.error('Error en el registro:', err);
-          return res.status(500).json({ error: 'Correo o token ya registrados' });
-        }
+    const [result] = await pool.execute(sql, [
+      nombre_nut,
+      app_nut,
+      apm_nut,
+      correo,
+      hashedPassword,
+      cedula_nut,
+      especialidad_nut,
+      telefono_nut,
+      token_vinculacion,
+    ]);
 
-        res.status(201).json({ message: 'Nutriólogo registrado exitosamente' });
-      }
-    );
+    res.status(201).json({ message: 'Nutriólogo registrado exitosamente' });
   } catch (error) {
-    res.status(500).json({ error: 'Error en el servidor' });
+    console.error('Error en el registro:', error);
+    res.status(500).json({ error: 'Correo o token ya registrados' });
   }
 });
 
 // LOGIN - nutriólogos o administradores 
-router.post('/nutriologos/login', (req, res) => {
+router.post('/nutriologos/login', async (req, res) => {
   const { correo, password } = req.body;
 
   const sqlNutri = `SELECT id_nut AS id, nombre_nut AS nombre, password, token, verificado, tiene_acceso, tipo_usu, 'nutriologo' AS rol FROM nutriologos WHERE correo = ?`;
 
-  db.query(sqlNutri, [correo], async (err, results) => {
-    if (err) return res.status(500).json({ error: 'Error en el servidor' });
+  try {
+    const [results] = await pool.execute(sqlNutri, [correo]);
 
     if (results.length > 0) {
       const nutri = results[0];
-if (nutri.verificado == 'pendiente') {
-      return res.status(403).json({ error: 'Solicitud de registro aún no ha aprobada. Intenta más tarde.' });
-    }
-    
-    if (nutri.verificado == 'denegado') {
-      return res.status(403).json({ error: 'Solicitud de registro denegada. Si crees que se trata de un error favor de comunicarse con soporte através de nutralis@gmail.com' });
-    }
+      if (nutri.verificado == 'pendiente') {
+        return res.status(403).json({ error: 'Solicitud de registro aún no ha aprobada. Intenta más tarde.' });
+      }
+      
+      if (nutri.verificado == 'denegado') {
+        return res.status(403).json({ error: 'Solicitud de registro denegada. Si crees que se trata de un error favor de comunicarse con soporte através de nutralis@gmail.com' });
+      }
 
       if (nutri.token) {
         return res.status(403).json({ error: 'Sesión ya activa' });
@@ -200,65 +217,60 @@ if (nutri.verificado == 'pendiente') {
       if (!match) return res.status(401).json({ error: 'Contraseña incorrecta' });
 
       const newToken = uuidv4();
-      db.query(
+      await pool.execute(
         `UPDATE nutriologos SET token = ? WHERE id_nut = ?`,
-        [newToken, nutri.id],
-        (err2) => {
-          if (err2) return res.status(500).json({ error: 'Error al guardar token' });
-
-          res.json({
-            message: 'Inicio de sesión exitoso (nutriólogo)',
-            id_nut: nutri.id,
-            nombre: nutri.nombre,
-            token: newToken,
-            tipo_usu: nutri.tipo_usu,
-            rol: 'nutriologo'
-          });
-        }
+        [newToken, nutri.id]
       );
+
+      res.json({
+        message: 'Inicio de sesión exitoso (nutriólogo)',
+        id_nut: nutri.id,
+        nombre: nutri.nombre,
+        token: newToken,
+        tipo_usu: nutri.tipo_usu,
+        rol: 'nutriologo'
+      });
     } else {
       const sqlAdmin = `SELECT id_admin AS id, nombre_admin AS nombre, password, token, tipo_usu, 'admin' AS rol FROM administradores WHERE correo = ?`;
 
-      db.query(sqlAdmin, [correo], async (err, resultsAdmin) => {
-        if (err) return res.status(500).json({ error: 'Error en el servidor' });
+      const [resultsAdmin] = await pool.execute(sqlAdmin, [correo]);
 
-        if (resultsAdmin.length === 0) {
-          return res.status(404).json({ error: 'Correo no registrado' });
-        }
+      if (resultsAdmin.length === 0) {
+        return res.status(404).json({ error: 'Correo no registrado' });
+      }
 
-        const admin = resultsAdmin[0];
+      const admin = resultsAdmin[0];
 
-        if (admin.token) {
-          return res.status(403).json({ error: 'Sesión ya activa en otro dispositivo' });
-        }
+      if (admin.token) {
+        return res.status(403).json({ error: 'Sesión ya activa en otro dispositivo' });
+      }
 
-        const match = await bcrypt.compare(password, admin.password);
-        if (!match) return res.status(401).json({ error: 'Contraseña incorrecta' });
+      const match = await bcrypt.compare(password, admin.password);
+      if (!match) return res.status(401).json({ error: 'Contraseña incorrecta' });
 
-        const newToken = uuidv4();
-        db.query(
-          `UPDATE administradores SET token = ? WHERE id_admin = ?`,
-          [newToken, admin.id],
-          (err2) => {
-            if (err2) return res.status(500).json({ error: 'Error al guardar token' });
+      const newToken = uuidv4();
+      await pool.execute(
+        `UPDATE administradores SET token = ? WHERE id_admin = ?`,
+        [newToken, admin.id]
+      );
 
-            res.json({
-              message: 'Inicio de sesión exitoso (administrador)',
-              id_nut: admin.id, // para mantener la clave en frontend
-              nombre: admin.nombre,
-              token: newToken,
-              tipo_usu: admin.tipo_usu,
-              rol: 'admin'
-            });
-          }
-        );
+      res.json({
+        message: 'Inicio de sesión exitoso (administrador)',
+        id_nut: admin.id, // para mantener la clave en frontend
+        nombre: admin.nombre,
+        token: newToken,
+        tipo_usu: admin.tipo_usu,
+        rol: 'admin'
       });
     }
-  });
+  } catch (err) {
+    console.error('Error en login:', err);
+    return res.status(500).json({ error: 'Error en el servidor' });
+  }
 });
 
 // LOGOUT 
-router.post('/nutriologos/logout', (req, res) => {
+router.post('/nutriologos/logout', async (req, res) => {
   const { id, rol } = req.body;
 
   // Validación de datos
@@ -270,33 +282,32 @@ router.post('/nutriologos/logout', (req, res) => {
   const tabla = rol === 'admin' ? 'administradores' : 'nutriologos';
   const campo = rol === 'admin' ? 'id_admin' : 'id_nut';
 
-  // Actualizar base de datos
-  db.query(
-    `UPDATE ${tabla} SET token = NULL WHERE ${campo} = ?`,
-    [id],
-    (err, result) => {
-      if (err) {
-        console.error('Error en la base de datos:', err);
-        return res.status(500).json({ error: 'Error al cerrar sesión' });
-      }
-      
-      if (result.affectedRows === 0) {
-        return res.status(404).json({ error: 'Usuario no encontrado' });
-      }
-      
-      res.json({ message: 'Sesión cerrada correctamente' });
+  try {
+    const [result] = await pool.execute(
+      `UPDATE ${tabla} SET token = NULL WHERE ${campo} = ?`,
+      [id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
     }
-  );
+    
+    res.json({ message: 'Sesión cerrada correctamente' });
+  } catch (err) {
+    console.error('Error en la base de datos:', err);
+    return res.status(500).json({ error: 'Error al cerrar sesión' });
+  }
 });
 
-router.post('/nutriologos/login-google', (req, res) => {
+// Login con Google
+router.post('/nutriologos/login-google', async (req, res) => {
   const { correo, nombre } = req.body;
   if (!correo) return res.status(400).json({ error: 'Correo requerido' });
 
   const sqlNutri = `SELECT id_nut AS id, nombre_nut AS nombre, token, verificado, tiene_acceso, tipo_usu FROM nutriologos WHERE correo = ?`;
 
-  db.query(sqlNutri, [correo], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Error en el servidor' });
+  try {
+    const [results] = await pool.execute(sqlNutri, [correo]);
 
     if (results.length > 0) {
       const nutri = results[0];
@@ -310,30 +321,27 @@ router.post('/nutriologos/login-google', (req, res) => {
       }
 
       const newToken = uuidv4();
-      db.query(`UPDATE nutriologos SET token = ? WHERE id_nut = ?`, [newToken, nutri.id], (err2) => {
-        if (err2) return res.status(500).json({ error: 'Error al guardar token' });
+      await pool.execute(`UPDATE nutriologos SET token = ? WHERE id_nut = ?`, [newToken, nutri.id]);
 
-        res.json({
-          message: 'Inicio de sesión exitoso (nutriólogo)',
-          id_nut: nutri.id,
-          nombre: nutri.nombre,
-          token: newToken,
-          tipo_usu: nutri.tipo_usu,
-          rol: 'nutriologo',
-        });
+      res.json({
+        message: 'Inicio de sesión exitoso (nutriólogo)',
+        id_nut: nutri.id,
+        nombre: nutri.nombre,
+        token: newToken,
+        tipo_usu: nutri.tipo_usu,
+        rol: 'nutriologo',
       });
     } else {
-      // Opcional: crear usuario nuevo automáticamente (si lo deseas)
-      // Por ahora, rechazo acceso
       res.status(404).json({ error: 'Usuario no registrado, favor registrarse' });
     }
-  });
+  } catch (err) {
+    console.error('Error en login Google:', err);
+    return res.status(500).json({ error: 'Error en el servidor' });
+  }
 });
 
-
-
 // Middleware para verificar token de sesión
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
   const id_nut = req.headers['id_nut'];
   const token = req.headers['token'];
   const rol = req.headers['rol'];
@@ -347,8 +355,8 @@ const verifyToken = (req, res, next) => {
 
   const sql = `SELECT token FROM ${tabla} WHERE ${campo} = ?`;
 
-  db.query(sql, [id_nut], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Error en la base de datos' });
+  try {
+    const [results] = await pool.execute(sql, [id_nut]);
 
     if (results.length === 0) {
       return res.status(403).json({ error: 'Usuario no encontrado' });
@@ -365,17 +373,20 @@ const verifyToken = (req, res, next) => {
     }
 
     next();
-  });
+  } catch (err) {
+    console.error('Error verificando token:', err);
+    return res.status(500).json({ error: 'Error en la base de datos' });
+  }
 };
 
 // objetivo de dieta activa
-router.get('/cliente-objetivo/:id', (req, res) => {
+router.get('/cliente-objetivo/:id', async (req, res) => {
   const clienteId = req.params.id;
 
-  console.log('Cliente ID recibido:', clienteId); // 👈 Agrega esto
+  console.log('Cliente ID recibido:', clienteId);
 
   if (!clienteId || isNaN(clienteId)) {
-    return res.status(400).json({ message: 'ID inválido' }); // 👈 Opcional: validación básica
+    return res.status(400).json({ message: 'ID inválido' });
   }
 
   const query = `
@@ -385,22 +396,22 @@ router.get('/cliente-objetivo/:id', (req, res) => {
     LIMIT 1
   `;
 
-  db.query(query, [clienteId], (err, results) => {
-    if (err) {
-      console.error('Error al ejecutar la consulta:', err);
-      return res.status(500).json({ message: 'Error en el servidor' });
-    }
+  try {
+    const [results] = await pool.execute(query, [clienteId]);
 
     if (results.length > 0) {
       res.json({ objetivo_dieta: results[0].objetivo_dieta });
     } else {
       res.status(404).json({ message: 'No se encontró objetivo para este cliente' });
     }
-  });
+  } catch (err) {
+    console.error('Error al ejecutar la consulta:', err);
+    return res.status(500).json({ message: 'Error en el servidor' });
+  }
 });
 
-// POST para obtener clientes por nutriólogo, recibe idNutriologo en body
-router.post('/clientes-por-nutriologo', (req, res) => {
+// Obtener clientes por nutriólogo
+router.post('/clientes-por-nutriologo', async (req, res) => {
   const { idNutriologo } = req.body;
 
   if (!idNutriologo || isNaN(idNutriologo)) {
@@ -410,28 +421,25 @@ router.post('/clientes-por-nutriologo', (req, res) => {
   const query = `
     SELECT 
       c.*, 
-      a.motivo, 
-      a.heredo_familiares, 
-      a.no_patologicos, 
-      a.patologicos, 
-      a.alergias, 
-      a.aversiones,
-      a.fecha_registro AS fecha_registro_antecedentes
+      f.motivo, 
+      f.antecedentes_heredofamiliares, 
+      f.antecedentes_personales_no_patologicos, 
+      f.antecedentes_personales_patologicos, 
+      f.alergias_intolerancias, 
+      f.aversiones_alimentarias,
+      f.fecha_envio AS fecha_registro_antecedentes
     FROM 
       clientes c
     LEFT JOIN 
-      antecedentes_medicos a ON c.id_cli = a.id_cli
+      formularios_nutricion f ON c.id_cli = f.id_cliente
     WHERE 
       c.id_nut = ?
     ORDER BY 
-      c.id_cli, a.fecha_registro DESC
+      c.id_cli, f.fecha_envio DESC
   `;
 
-  db.query(query, [idNutriologo], (err, clientes) => {
-    if (err) {
-      console.error('Error al obtener clientes:', err);
-      return res.status(500).json({ error: 'Error en la base de datos' });
-    }
+  try {
+    const [clientes] = await pool.execute(query, [idNutriologo]);
 
     // Agrupar los antecedentes médicos por cliente
     const clientesAgrupados = clientes.reduce((acc, row) => {
@@ -440,23 +448,24 @@ router.post('/clientes-por-nutriologo', (req, res) => {
           ...row,
           antecedentes: []
         };
+        // Eliminar los campos de formulario para evitar repetición
         delete acc[row.id_cli].motivo;
-        delete acc[row.id_cli].heredo_familiares;
-        delete acc[row.id_cli].no_patologicos;
-        delete acc[row.id_cli].patologicos;
-        delete acc[row.id_cli].alergias;
-        delete acc[row.id_cli].aversiones;
+        delete acc[row.id_cli].antecedentes_heredofamiliares;
+        delete acc[row.id_cli].antecedentes_personales_no_patologicos;
+        delete acc[row.id_cli].antecedentes_personales_patologicos;
+        delete acc[row.id_cli].alergias_intolerancias;
+        delete acc[row.id_cli].aversiones_alimentarias;
         delete acc[row.id_cli].fecha_registro_antecedentes;
       }
 
       if (row.motivo) {
         acc[row.id_cli].antecedentes.push({
           motivo: row.motivo,
-          heredo_familiares: row.heredo_familiares,
-          no_patologicos: row.no_patologicos,
-          patologicos: row.patologicos,
-          alergias: row.alergias,
-          aversiones: row.aversiones,
+          heredo_familiares: row.antecedentes_heredofamiliares,
+          no_patologicos: row.antecedentes_personales_no_patologicos,
+          patologicos: row.antecedentes_personales_patologicos,
+          alergias: row.alergias_intolerancias,
+          aversiones: row.aversiones_alimentarias,
           fecha_registro: row.fecha_registro_antecedentes
         });
       }
@@ -465,12 +474,14 @@ router.post('/clientes-por-nutriologo', (req, res) => {
     }, {});
 
     res.json(Object.values(clientesAgrupados));
-  });
+  } catch (err) {
+    console.error('Error al obtener clientes:', err);
+    return res.status(500).json({ error: 'Error en la base de datos' });
+  }
 });
 
-
-// POST para obtener cliente por id, recibe idCliente en body
-router.post('/cliente-detalle', (req, res) => {
+// Detalle de cliente
+router.post('/cliente-detalle', async (req, res) => {
   const { idCliente } = req.body;
 
   if (!idCliente || isNaN(idCliente)) {
@@ -482,39 +493,44 @@ router.post('/cliente-detalle', (req, res) => {
       id_cli, tipo_usu, nombre_cli, app_cli, apm_cli, correo_cli, edad_cli, sexo_cli, 
       peso_cli, estatura_cli, faf_cli, geb_cli, modo, id_nut, fecha_inicio_pago, fecha_fin_pago, tiene_acceso
     FROM clientes
-    WHERE id_cli = ?;
+    WHERE id_cli = ?
   `;
 
   const sqlAntecedentes = `
     SELECT 
-      id_antecedente, motivo, heredo_familiares, no_patologicos, patologicos, alergias, aversiones, fecha_registro
-    FROM antecedentes_medicos
-    WHERE id_cli = ?;
+      id AS id_formulario,
+      motivo, 
+      antecedentes_heredofamiliares, 
+      antecedentes_personales_no_patologicos, 
+      antecedentes_personales_patologicos, 
+      alergias_intolerancias, 
+      aversiones_alimentarias, 
+      fecha_envio AS fecha_registro
+    FROM formularios_nutricion
+    WHERE id_cliente = ?
+    ORDER BY fecha_envio DESC
   `;
 
-  connection.query(sqlCliente, [idCliente], (err, clienteResults) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: 'Error al obtener datos del cliente' });
-    }
+  try {
+    const [clienteResults] = await pool.execute(sqlCliente, [idCliente]);
+    
     if (clienteResults.length === 0) {
       return res.status(404).json({ error: 'Cliente no encontrado' });
     }
 
-    connection.query(sqlAntecedentes, [idCliente], (err2, antecedentesResults) => {
-      if (err2) {
-        console.error(err2);
-        return res.status(500).json({ error: 'Error al obtener antecedentes médicos' });
-      }
+    const [antecedentesResults] = await pool.execute(sqlAntecedentes, [idCliente]);
 
-      const cliente = clienteResults[0];
-      cliente.antecedentes_medicos = antecedentesResults;
+    const cliente = clienteResults[0];
+    cliente.antecedentes_nutricionales = antecedentesResults;
 
-      res.json(cliente);
-    });
-  });
+    res.json(cliente);
+  } catch (err) {
+    console.error('Error al obtener datos del cliente:', err);
+    return res.status(500).json({ error: 'Error al obtener datos del cliente' });
+  }
 });
 
+// Guardar dieta
 router.post('/guardar-dieta', async (req, res) => {
   const {
     idCliente,
@@ -542,16 +558,13 @@ router.post('/guardar-dieta', async (req, res) => {
     'Cena': 'cena'
   };
 
-  const query = (sql, params) => new Promise((resolve, reject) => {
-    connection.query(sql, params, (err, results) => {
-      if (err) reject(err);
-      else resolve(results);
-    });
-  });
+  const connection = await mysql.createConnection(dbConfig);
 
   try {
+    await connection.beginTransaction();
+
     // Insertar dieta con activo = 1
-    const resultadoDieta = await query(
+    const [resultadoDieta] = await connection.execute(
       `INSERT INTO dietas 
        (id_cli, nombre_dieta, objetivo_dieta, duracion, porcentaje_proteinas, porcentaje_carbs, porcentaje_grasas, calorias_objetivo, recomendaciones, activo)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
@@ -565,7 +578,7 @@ router.post('/guardar-dieta', async (req, res) => {
       const nombreTiempoBD = nombreTiempoMap[tiempoFrontend];
       if (!nombreTiempoBD) continue;
 
-      const resultadoTiempo = await query(
+      const [resultadoTiempo] = await connection.execute(
         `INSERT INTO tiempos_comida (id_dieta, nombre_tiempo) VALUES (?, ?)`,
         [idDieta, nombreTiempoBD]
       );
@@ -573,7 +586,7 @@ router.post('/guardar-dieta', async (req, res) => {
       const idTiempo = resultadoTiempo.insertId;
 
       for (const alimento of alimentos) {
-        await query(
+        await connection.execute(
           `INSERT INTO alimentos_dieta (id_tiempo, nombre_alimento, cantidad_gramos, calorias, grupo_alimenticio)
            VALUES (?, ?, ?, ?, ?)`,
           [
@@ -588,22 +601,24 @@ router.post('/guardar-dieta', async (req, res) => {
     }
 
     // Desactivar todas las demás dietas del cliente menos la que se acaba de insertar
-    await query(
+    await connection.execute(
       `UPDATE dietas SET activo = 0 WHERE id_cli = ? AND id_dieta != ?`,
       [idCliente, idDieta]
     );
 
+    await connection.commit();
     res.json({ mensaje: 'Dieta guardada correctamente', idDieta });
   } catch (error) {
+    await connection.rollback();
     console.error('Error al guardar dieta:', error);
     res.status(500).json({ message: 'Error al guardar la dieta', error: error.message });
+  } finally {
+    await connection.end();
   }
 });
 
-
-
-
-router.get('/info/:id', (req, res) => {
+// Obtener información del nutriólogo
+router.get('/info/:id', async (req, res) => {
   const idNut = req.params.id;
 
   if (!idNut) {
@@ -632,50 +647,60 @@ router.get('/info/:id', (req, res) => {
     WHERE id_nut = ?
   `;
 
-  connection.query(query, [idNut], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Error en base de datos', detalles: err });
-    if (results.length === 0) return res.status(404).json({ error: 'Nutriólogo no encontrado' });
+  try {
+    const [results] = await pool.execute(query, [idNut]);
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Nutriólogo no encontrado' });
+    }
 
     res.json(results[0]);
-  });
+  } catch (err) {
+    console.error('Error obteniendo info nutriólogo:', err);
+    return res.status(500).json({ error: 'Error en base de datos', detalles: err });
+  }
 });
 
-router.get('/detalle/:id', (req, res) => {
+// Detalle del nutriólogo
+router.get('/detalle/:id', async (req, res) => {
   const idNut = req.params.id;
 
   if (!idNut) {
     return res.status(400).json({ error: 'Falta id de nutriólogo' });
   }
 
-  connection.query(
-    `SELECT 
-      id_nut,
-      tipo_usu,
-      nombre_nut,
-      app_nut,
-      apm_nut,
-      correo,
-      cedula_nut,
-      especialidad_nut,
-      telefono_nut,
-      fecha_inicio_sub,
-      fecha_fin_sub,
-      token_vinculacion,
-      tiene_acceso,
-      verificado
-    FROM nutriologos
-    WHERE id_nut = ?`,
-    [idNut],
-    (err, results) => {
-      if (err) return res.status(500).json({ error: 'Error en base de datos' });
-      if (results.length === 0) return res.status(404).json({ error: 'Nutriólogo no encontrado' });
-
-      const data = results[0];
-      res.json(data);
+  try {
+    const [results] = await pool.execute(
+      `SELECT 
+        id_nut,
+        tipo_usu,
+        nombre_nut,
+        app_nut,
+        apm_nut,
+        correo,
+        cedula_nut,
+        especialidad_nut,
+        telefono_nut,
+        fecha_inicio_sub,
+        fecha_fin_sub,
+        token_vinculacion,
+        tiene_acceso,
+        verificado
+      FROM nutriologos
+      WHERE id_nut = ?`,
+      [idNut]
+    );
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Nutriólogo no encontrado' });
     }
-  );
-});
 
+    res.json(results[0]);
+  } catch (err) {
+    console.error('Error obteniendo detalle nutriólogo:', err);
+    return res.status(500).json({ error: 'Error en base de datos' });
+  }
+});
 
 // Credenciales PayPal Sandbox
 const PAYPAL_CLIENT_ID = 'AbCpAHnHhEs2jlbon0p7sX_hfRcdDE2VN0fYKew2TTddKk2kMQB7JI6C7jl2380cg3Rl2BymYKdlxDxT';
@@ -732,22 +757,16 @@ router.post('/crear-pago', async (req, res) => {
     const orden = ordenResponse.data;
     const fecha_pago = new Date();
 
-    connection.query(
+    const [result] = await pool.execute(
       'INSERT INTO pagos_nutriologos (id_nut, monto, fecha_pago, metodo_pago, estado) VALUES (?, ?, ?, ?, ?)',
-      [id_nut, monto, fecha_pago, metodo_pago, 'pendiente'],
-      (err, result) => {
-        if (err) {
-          console.error('Error al guardar pago:', err);
-          return res.status(500).json({ error: 'Error al guardar pago en BD' });
-        }
-
-        res.json({
-          mensaje: 'Pago creado',
-          id_pago: result.insertId,
-          orden_paypal: orden,
-        });
-      }
+      [id_nut, monto, fecha_pago, metodo_pago, 'pendiente']
     );
+
+    res.json({
+      mensaje: 'Pago creado',
+      id_pago: result.insertId,
+      orden_paypal: orden,
+    });
   } catch (error) {
     console.error('Error PayPal:', error.response?.data || error.message);
     res.status(500).json({ error: 'Error con PayPal', detalle: error.message });
@@ -782,64 +801,48 @@ router.post('/capturar-pago', async (req, res) => {
     }
 
     // Primero actualizamos el estado del pago
-    connection.query(
+    const [updateResult] = await pool.execute(
       'UPDATE pagos_nutriologos SET estado = ? WHERE id_pago = ?',
-      [estado, id_pago],
-      (err) => {
-        if (err) {
-          console.error('Error al actualizar estado del pago:', err);
-          return res.status(500).json({ error: 'Error al actualizar estado del pago' });
-        }
-
-        // Si fue exitoso, obtener fecha_pago e id_nut del pago para actualizar nutriologos
-        if (estado === 'exitoso') {
-          connection.query(
-            'SELECT fecha_pago, id_nut FROM pagos_nutriologos WHERE id_pago = ?',
-            [id_pago],
-            (err, rows) => {
-              if (err) {
-                console.error('Error al obtener fecha del pago:', err);
-                return res.status(500).json({ error: 'Error al obtener fecha del pago' });
-              }
-
-              const { fecha_pago, id_nut } = rows[0];
-
-              // Actualiza fecha_inicio_sub = fecha_pago
-               connection.query(
-        'UPDATE nutriologos SET fecha_inicio_sub = ?, tiene_acceso = 1 WHERE id_nut = ?',
-        [fecha_pago, id_nut],
-        (err) => {
-          if (err) {
-            console.error('Error al actualizar suscripción y acceso:', err);
-            return res.status(500).json({ error: 'Error al actualizar la suscripción' });
-          }
-
-                  res.json({
-                    mensaje: 'Pago actualizado y suscripción registrada',
-                    estado,
-                    detalle: captureResponse.data,
-                  });
-                }
-              );
-            }
-          );
-        } else {
-          res.json({
-            mensaje: 'Pago actualizado',
-            estado,
-            detalle: captureResponse.data,
-          });
-        }
-      }
+      [estado, id_pago]
     );
+
+    // Si fue exitoso, obtener fecha_pago e id_nut del pago para actualizar nutriologos
+    if (estado === 'exitoso') {
+      const [rows] = await pool.execute(
+        'SELECT fecha_pago, id_nut FROM pagos_nutriologos WHERE id_pago = ?',
+        [id_pago]
+      );
+
+      const { fecha_pago, id_nut } = rows[0];
+
+      // Actualiza fecha_inicio_sub = fecha_pago
+      await pool.execute(
+        'UPDATE nutriologos SET fecha_inicio_sub = ?, tiene_acceso = 1 WHERE id_nut = ?',
+        [fecha_pago, id_nut]
+      );
+
+      res.json({
+        mensaje: 'Pago actualizado y suscripción registrada',
+        estado,
+        detalle: captureResponse.data,
+      });
+    } else {
+      res.json({
+        mensaje: 'Pago actualizado',
+        estado,
+        detalle: captureResponse.data,
+      });
+    }
   } catch (error) {
     console.error('Error al capturar pago:', error.response?.data || error.message);
     res.status(500).json({ error: 'Error al capturar pago', detalle: error.message });
   }
 });
 
+// === ESTADÍSTICAS Y REPORTES ===
+
 // a) Clientes con dieta activa, calorías promedio y número de comidas en periodo
-router.post('/clientes/dietas-activa', (req, res) => {
+router.post('/clientes/dietas-activa', async (req, res) => {
   const { idNutriologo } = req.body;
   if (!idNutriologo || isNaN(idNutriologo)) {
     return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -865,14 +868,17 @@ router.post('/clientes/dietas-activa', (req, res) => {
     ORDER BY calorias_promedio DESC;
   `;
 
-  connection.query(sql, [idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en estadísticas dietas activas:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // b) Clientes con dieta activa y días que llevan activos
-router.post('/clientes/dias-activos', (req, res) => {
+router.post('/clientes/dias-activos', async (req, res) => {
   const { idNutriologo } = req.body;
   if (!idNutriologo || isNaN(idNutriologo)) {
     return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -894,14 +900,17 @@ router.post('/clientes/dias-activos', (req, res) => {
     ORDER BY dias_actividad DESC;
   `;
 
-  connection.query(sql, [idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en estadísticas días activos:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // c) Clientes con dieta activa que superan su objetivo calórico
-router.post('/clientes/superan-objetivo', (req, res) => {
+router.post('/clientes/superan-objetivo', async (req, res) => {
   const { idNutriologo } = req.body;
   if (!idNutriologo || isNaN(idNutriologo)) {
     return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -926,14 +935,17 @@ router.post('/clientes/superan-objetivo', (req, res) => {
     ORDER BY calorias_consumidas DESC;
   `;
 
-  connection.query(sql, [idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en estadísticas objetivo superado:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // d) Resumen de clientes por sexo y edad
-router.post('/clientes/resumen-sexo-modo', (req, res) => {
+router.post('/clientes/resumen-sexo-modo', async (req, res) => {
   const { idNutriologo } = req.body;
   if (!idNutriologo || isNaN(idNutriologo)) {
     return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -950,14 +962,19 @@ router.post('/clientes/resumen-sexo-modo', (req, res) => {
     ORDER BY total_clientes DESC;
   `;
 
-  connection.query(sql, [idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en resumen por sexo:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
+// === ESTADÍSTICAS INDIVIDUALES POR CLIENTE ===
+
 // Consulta individual (paciente específico) - Info básica
-router.post('/cliente/info-basica', (req, res) => {
+router.post('/cliente/info-basica', async (req, res) => {
   const { idCliente, idNutriologo } = req.body;
   if (!idCliente || isNaN(idCliente)) return res.status(400).json({ error: 'ID de cliente inválido' });
   if (!idNutriologo || isNaN(idNutriologo)) return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -982,15 +999,22 @@ router.post('/cliente/info-basica', (req, res) => {
       AND CURDATE() BETWEEN DATE(d.fecha_inicio) AND DATE(d.fecha_fin);
   `;
 
-  connection.query(sql, [idCliente, idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
-    if (results.length === 0) return res.status(404).json({ error: 'Cliente no encontrado o sin dieta activa' });
+  try {
+    const [results] = await pool.execute(sql, [idCliente, idNutriologo]);
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Cliente no encontrado o sin dieta activa' });
+    }
+    
     res.json(results[0]);
-  });
+  } catch (error) {
+    console.error('Error en info básica cliente:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // Datos de calorías diarias (promedio) para paciente individual en periodo
-router.post('/cliente/calorias', (req, res) => {
+router.post('/cliente/calorias', async (req, res) => {
   const { idCliente, idNutriologo } = req.body;
   if (!idCliente || isNaN(idCliente)) return res.status(400).json({ error: 'ID de cliente inválido' });
   if (!idNutriologo || isNaN(idNutriologo)) return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -1009,14 +1033,17 @@ router.post('/cliente/calorias', (req, res) => {
     ORDER BY dia ASC;
   `;
 
-  connection.query(sql, [idCliente, idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idCliente, idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en calorías cliente:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // Macronutrientes consumidos para paciente individual
-router.post('/cliente/macronutrientes', (req, res) => {
+router.post('/cliente/macronutrientes', async (req, res) => {
   const { idCliente, idNutriologo } = req.body;
   if (!idCliente || isNaN(idCliente)) return res.status(400).json({ error: 'ID de cliente inválido' });
   if (!idNutriologo || isNaN(idNutriologo)) return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -1050,14 +1077,17 @@ router.post('/cliente/macronutrientes', (req, res) => {
       AND com.fecha BETWEEN d.fecha_inicio AND d.fecha_fin;
   `;
 
-  connection.query(sql, [idCliente, idNutriologo, idCliente, idNutriologo, idCliente, idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idCliente, idNutriologo, idCliente, idNutriologo, idCliente, idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en macronutrientes cliente:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // Adherencia a la dieta
-router.post('/cliente/adherencia', (req, res) => {
+router.post('/cliente/adherencia', async (req, res) => {
   const { idCliente, idNutriologo } = req.body;
   if (!idCliente || isNaN(idCliente)) return res.status(400).json({ error: 'ID de cliente inválido' });
   if (!idNutriologo || isNaN(idNutriologo)) return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -1074,14 +1104,17 @@ router.post('/cliente/adherencia', (req, res) => {
     ORDER BY dia ASC;
   `;
 
-  connection.query(sql, [idCliente, idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idCliente, idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en adherencia cliente:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // Cumplimiento de horarios
-router.post('/cliente/horarios', (req, res) => {
+router.post('/cliente/horarios', async (req, res) => {
   const { idCliente, idNutriologo } = req.body;
   if (!idCliente || isNaN(idCliente)) return res.status(400).json({ error: 'ID de cliente inválido' });
   if (!idNutriologo || isNaN(idNutriologo)) return res.status(400).json({ error: 'ID de nutriólogo inválido' });
@@ -1097,13 +1130,14 @@ router.post('/cliente/horarios', (req, res) => {
     GROUP BY com.tipo_comida;
   `;
 
-  connection.query(sql, [idCliente, idNutriologo], (error, results) => {
-    if (error) return res.status(500).json({ error: error.message });
+  try {
+    const [results] = await pool.execute(sql, [idCliente, idNutriologo]);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Error en horarios cliente:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
-
-
-
-module.exports = router;  
+// Exportar el router y la función de inicialización de MongoDB
+module.exports = { router, initMongoDB };
