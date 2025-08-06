@@ -8,6 +8,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const WebSocket = require('ws');
 
 const app = express();
+const { router: apiRoutes, initMongoDB } = require('./routes/api');
 
 // Configuración de CORS
 app.use(cors({
@@ -36,6 +37,8 @@ const dbConfig = {
   database: process.env.DB_NAME
 };
 
+app.use('/api', apiRoutes);
+
 // Estado global de podómetros conectados
 let connectedPedometers = new Map();
 
@@ -49,6 +52,7 @@ const mercadopago = new MercadoPagoConfig({
 
 const payment = new Payment(mercadopago);
 const preference = new Preference(mercadopago);
+
 
 app.post('/api/mercadopago/create-preference', async (req, res) => {
   try {
