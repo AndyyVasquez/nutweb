@@ -8,7 +8,6 @@ const { MongoClient, ObjectId } = require('mongodb');
 const WebSocket = require('ws');
 
 const app = express();
-const { router: apiRoutes, initMongoDB } = require('./routes/api');
 
 // Configuración de CORS
 app.use(cors({
@@ -20,13 +19,10 @@ app.use(cors({
   credentials: true
 }));
 
-app.options('*', cors());
-
 app.use(express.json());
 
 // Middleware de logging
 app.use((req, res, next) => {
-  console.log('🔍 Request URL:', req.url);
   console.log(`${req.method} ${req.path}`);
   console.log('Raw body:', req.body);
   next();
@@ -39,8 +35,6 @@ const dbConfig = {
   password: process.env.DB_PASS,
   database: process.env.DB_NAME
 };
-
-// app.use('/api', apiRoutes);
 
 // Estado global de podómetros conectados
 let connectedPedometers = new Map();
@@ -55,7 +49,6 @@ const mercadopago = new MercadoPagoConfig({
 
 const payment = new Payment(mercadopago);
 const preference = new Preference(mercadopago);
-
 
 app.post('/api/mercadopago/create-preference', async (req, res) => {
   try {
@@ -1189,9 +1182,7 @@ async function connectMongo() {
     console.error('❌ Error conectando a MongoDB:', err);
   }
 }
-connectMongo().then((db) => {
-  initMongoDB(() => db);
-}).catch(console.error);
+connectMongo();
 
 // DEBUGGING TEMPORAL - Agregar después de connectMongo()
 setTimeout(async () => {
@@ -3077,10 +3068,10 @@ app.post('/api/login', async (req, res) => {
 
     try {
       // Buscar en administradores
-     const [adminResults] = await connection.execute(
-  'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo as correo, password as password FROM administradores WHERE correo = ?',
-  [correo]
-);
+      const [adminResults] = await connection.execute(
+        'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo_admin as correo, password_admin as password FROM administradores WHERE correo_admin = ?',
+        [correo]
+      );
 
       if (adminResults.length > 0) {
         user = adminResults[0];
@@ -3318,8 +3309,6 @@ app.use((error, req, res, next) => {
     error: error.message
   });
 });
-
-app.use('/api', apiRoutes);
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3001;
