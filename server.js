@@ -3077,7 +3077,7 @@ app.post('/api/mobile/login', async (req, res) => {
     try {
       // Buscar en administradores
       const [adminResults] = await connection.execute(
-        'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo_admin as correo, password_admin as password FROM administradores WHERE correo_admin = ?',
+        'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo as correo, password_admin as password FROM administradores WHERE correo = ?',
         [correo]
       );
 
