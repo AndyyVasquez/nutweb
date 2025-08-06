@@ -1,25 +1,26 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AndyyVasquez/nutweb.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AndyyVasquez/nutweb/issues"
+  },
+  "homepage": "https://github.com/AndyyVasquez/nutweb#readme",
   "description": "",
   "dependencies": {
-    "axios": "^1.10.0",
-    "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
-    "dotenv": "^17.0.0",
     "express": "^5.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "mercadopago": "^2.8.0",
-    "mongodb": "^6.17.0",
-    "mysql2": "^3.14.1",
-    "path-to-regexp": "^8.2.0",
-    "ws": "^8.18.3"
+    "mysql": "^2.18.1"
   }
 }
