@@ -1182,7 +1182,9 @@ async function connectMongo() {
     console.error('❌ Error conectando a MongoDB:', err);
   }
 }
-connectMongo();
+connectMongo().then((db) => {
+  initMongoDB(() => db);
+}).catch(console.error);
 
 // DEBUGGING TEMPORAL - Agregar después de connectMongo()
 setTimeout(async () => {
@@ -3309,6 +3311,8 @@ app.use((error, req, res, next) => {
     error: error.message
   });
 });
+
+app.use('/api', apiRoutes);
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3001;
