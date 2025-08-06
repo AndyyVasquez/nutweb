@@ -19,6 +19,7 @@
     "mercadopago": "^2.8.0",
     "mongodb": "^6.17.0",
     "mysql2": "^3.14.1",
+    "path-to-regexp": "^8.2.0",
     "ws": "^8.18.3"
   }
 }

@@ -26,6 +26,7 @@ app.use(express.json());
 
 // Middleware de logging
 app.use((req, res, next) => {
+  console.log('🔍 Request URL:', req.url);
   console.log(`${req.method} ${req.path}`);
   console.log('Raw body:', req.body);
   next();
@@ -3076,10 +3077,10 @@ app.post('/api/login', async (req, res) => {
 
     try {
       // Buscar en administradores
-      const [adminResults] = await connection.execute(
-        'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo as correo, password_admin as password FROM administradores WHERE correo = ?',
-        [correo]
-      );
+     const [adminResults] = await connection.execute(
+  'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo as correo, password as password FROM administradores WHERE correo = ?',
+  [correo]
+);
 
       if (adminResults.length > 0) {
         user = adminResults[0];
