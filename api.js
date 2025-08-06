@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const router = express.Router();
 const mysql = require('mysql2/promise');
@@ -14,6 +15,16 @@ const dbConfig = {
   database: process.env.DB_NAME
 };
 
+app.use(cors({
+  origin: [
+    '*'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true
+}));
+
+app.use(express.json());
 // Pool de conexiones MySQL
 const pool = mysql.createPool(dbConfig);
 
