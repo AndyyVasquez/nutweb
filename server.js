@@ -3058,7 +3058,7 @@ app.get('/api/mysql-test', async (req, res) => {
 });
 
 
-app.post('/api/mobile/login', async (req, res) => {
+app.post('/api/login', async (req, res) => {
   try {
     console.log('=== LOGIN ATTEMPT ===');
     const { correo, password } = req.body;
