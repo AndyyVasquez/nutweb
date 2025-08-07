@@ -16,14 +16,26 @@ const app = express();
 // Configuración de CORS
 app.use(cors({
   origin: [
-    '*'
+    'https://integradora1.com',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'https://nutweb.onrender.com',
+    '*' 
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'id_nut', 'token', 'rol'],
+  allowedHeaders: ['Content-Type', 
+    'Authorization', 
+    'Accept', 
+    'id_nut', 
+    'token', 
+    'rol',
+    'Origin',
+    'X-Requested-With'],
   credentials: true
 }));
 
 app.use(express.json());
+app.options('*', cors());
 
 // Middleware de logging
 app.use((req, res, next) => {
@@ -3000,6 +3012,10 @@ app.post('/api/register-client', async (req, res) => {
 
 // REGISTRO NUTRIÓLOGO (WEB)
 app.post('/api/nutriologos/registro', async (req, res) => {
+  console.log('📝 === REGISTRO NUTRIÓLOGO ===');
+  console.log('📥 Headers recibidos:', req.headers);
+  console.log('📥 Body recibido:', req.body);
+  
   const {
     nombre_nut,
     app_nut,
@@ -3012,42 +3028,116 @@ app.post('/api/nutriologos/registro', async (req, res) => {
     token_vinculacion,
   } = req.body;
 
+  // Validaciones mejoradas
+  if (!nombre_nut || !app_nut || !correo || !password || !cedula_nut || !telefono_nut) {
+    console.log('❌ Faltan datos obligatorios');
+    return res.status(400).json({ 
+      success: false,
+      error: 'Faltan datos obligatorios: nombre, apellido paterno, correo, contraseña, cédula y teléfono son requeridos' 
+    });
+  }
+
+  // Validar formato de correo
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(correo)) {
+    console.log('❌ Formato de correo inválido');
+    return res.status(400).json({ 
+      success: false,
+      error: 'Formato de correo electrónico inválido' 
+    });
+  }
+
+  // Validar longitud de contraseña
+  if (password.length < 5) {
+    console.log('❌ Contraseña muy corta');
+    return res.status(400).json({ 
+      success: false,
+      error: 'La contraseña debe tener al menos 5 caracteres' 
+    });
+  }
+
   try {
+    console.log('🔐 Hasheando contraseña...');
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const sql = `
-      INSERT INTO nutriologos
-      (nombre_nut, app_nut, apm_nut, correo, password, cedula_nut, especialidad_nut, telefono_nut, token_vinculacion)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
+    console.log('🔍 Verificando si el correo ya existe...');
+    // Verificar si el correo ya existe
+    const [existingUser] = await pool.execute(
+      'SELECT correo FROM nutriologos WHERE correo = ?',
+      [correo]
+    );
 
-    connection.query(
-      sql,
+    if (existingUser.length > 0) {
+      console.log('❌ Correo ya registrado:', correo);
+      return res.status(409).json({ 
+        success: false,
+        error: 'Este correo electrónico ya está registrado. Por favor usa otro correo.' 
+      });
+    }
+
+    console.log('💾 Insertando nuevo nutriólogo...');
+    // Insertar nuevo nutriólogo usando pool
+    const [result] = await pool.execute(
+      `INSERT INTO nutriologos
+       (nombre_nut, app_nut, apm_nut, correo, password, cedula_nut, especialidad_nut, telefono_nut, token_vinculacion, verificado, tiene_acceso, activo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente', 0, 0)`,
       [
         nombre_nut,
         app_nut,
-        apm_nut,
+        apm_nut || '',
         correo,
         hashedPassword,
         cedula_nut,
-        especialidad_nut,
+        especialidad_nut || '',
         telefono_nut,
-        token_vinculacion,
-      ],
-      (err, result) => {
-        if (err) {
-          console.error('Error en el registro:', err);
-          return res.status(500).json({ error: 'Correo o token ya registrados' });
-        }
-
-        res.status(201).json({ message: 'Nutriólogo registrado exitosamente' });
-      }
+        token_vinculacion || `TOKEN_${Date.now()}_${Math.floor(Math.random() * 1000)}`
+      ]
     );
+
+    console.log('✅ Nutriólogo registrado exitosamente con ID:', result.insertId);
+
+    res.status(201).json({ 
+      success: true,
+      message: 'Nutriólogo registrado exitosamente',
+      data: {
+        id_nut: result.insertId,
+        nombre_completo: `${nombre_nut} ${app_nut} ${apm_nut || ''}`.trim(),
+        correo: correo,
+        estado: 'pendiente_aprobacion'
+      }
+    });
+
   } catch (error) {
-    res.status(500).json({ error: 'Error en el servidor' });
+    console.error('❌ Error en el registro:', error);
+    
+    // Manejo específico de errores MySQL
+    if (error.code === 'ER_DUP_ENTRY') {
+      if (error.message.includes('correo')) {
+        return res.status(409).json({ 
+          success: false,
+          error: 'Este correo electrónico ya está registrado' 
+        });
+      }
+      if (error.message.includes('cedula')) {
+        return res.status(409).json({ 
+          success: false,
+          error: 'Esta cédula profesional ya está registrada' 
+        });
+      }
+      if (error.message.includes('token')) {
+        return res.status(409).json({ 
+          success: false,
+          error: 'Token de vinculación ya existe' 
+        });
+      }
+    }
+
+    res.status(500).json({ 
+      success: false,
+      error: 'Error interno del servidor. Por favor intenta de nuevo.' 
+    });
   }
 });
-
 // =============================================================================
 // ENDPOINTS MERCADO PAGO (MÓVIL)
 // =============================================================================
