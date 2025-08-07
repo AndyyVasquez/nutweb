@@ -17,7 +17,6 @@
     "url": "https://github.com/AndyyVasquez/nutweb/issues"
   },
   "homepage": "https://github.com/AndyyVasquez/nutweb#readme",
-  "description": "",
   "dependencies": {
     "@paypal/checkout-server-sdk": "^1.0.3",
     "axios": "^1.11.0",
@@ -33,5 +32,7 @@
     "paypal-server-api": "^2.0.14",
     "uuid": "^11.1.0",
     "ws": "^8.18.3"
-  }
+  },
+  "devDependencies": {},
+  "description": ""
 }
