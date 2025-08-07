@@ -36,6 +36,13 @@ app.use(cors({
 
 app.use(express.json());
 app.options('*', cors());
+const originalGet = app.get;
+app.get = function (path, ...rest) {
+  if (path.includes('/:') && !/\/:\w+/.test(path)) {
+    console.error('❌ Ruta mal formada detectada:', path);
+  }
+  return originalGet.call(this, path, ...rest);
+};
 
 // Middleware de logging
 app.use((req, res, next) => {
@@ -4086,16 +4093,6 @@ app.post('/api/capturar-pago', async (req, res) => {
 // =============================================================================
 // MANEJO DE ERRORES Y INICIO DEL SERVIDOR
 // =============================================================================
-
-// Manejo de errores globales
-app.use((error, req, res, next) => {
-  console.error('❌ Error global:', error);
-  res.status(500).json({
-    success: false,
-    message: 'Error interno del servidor',
-    error: error.message
-  });
-});
 
 // Iniciar servidor
 const PORT = process.env.PORT || 3001;
