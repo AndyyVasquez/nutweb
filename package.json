@@ -18,7 +18,6 @@
   },
   "homepage": "https://github.com/AndyyVasquez/nutweb#readme",
   "dependencies": {
-    "@paypal/checkout-server-sdk": "^1.0.3",
     "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
@@ -28,8 +27,6 @@
     "mongodb": "^6.18.0",
     "mysql": "^2.18.1",
     "mysql2": "^3.14.3",
-    "path-to-regexp": "^8.2.0",
-    "paypal-server-api": "^2.0.14",
     "uuid": "^11.1.0",
     "ws": "^8.18.3"
   },
