@@ -47,6 +47,7 @@ const mercadopago = new MercadoPagoConfig({
   }
 });
 
+let connectedScales = new Map();
 const payment = new Payment(mercadopago);
 const preference = new Preference(mercadopago);
 
@@ -1225,7 +1226,10 @@ let scaleState = {
   connected: false,
   weight: 0,
   lastUpdate: null,
-  calibrated: true
+  calibrated: true,
+  currentFood: null, // Información del alimento actual
+  targetWeight: 0,   // Peso objetivo
+  isWeighing: false  // Si está en proceso de pesado
 };
 
 // Estado del podómetro ESP32
@@ -1250,29 +1254,72 @@ wss.on('connection', (ws) => {
       const data = JSON.parse(message);
       
       // === BÁSCULA ===
-      if (data.type === 'scale_connect') {
+       if (data.type === 'scale_connect') {
+        const deviceKey = data.device_id || 'default';
         scaleState.connected = true;
         scaleState.lastUpdate = new Date();
-        console.log('📟 Báscula conectada');
+        console.log('⚖️ Báscula conectada:', deviceKey);
         
         ws.send(JSON.stringify({
           type: 'connection_confirmed',
           device: 'scale',
+          device_id: deviceKey,
           timestamp: new Date().toISOString()
         }));
       }
-      
+
       if (data.type === 'weight_update') {
-        scaleState.weight = data.weight;
+        scaleState.weight = parseFloat(data.weight) || 0;
         scaleState.lastUpdate = new Date();
-        console.log('⚖️ Peso actualizado:', data.weight, 'g');
+        console.log('⚖️ Peso actualizado:', scaleState.weight, 'g');
+        
+        // Si está pesando y hay un objetivo, verificar si está cerca
+        if (scaleState.isWeighing && scaleState.targetWeight > 0) {
+          const difference = Math.abs(scaleState.weight - scaleState.targetWeight);
+          const tolerance = scaleState.targetWeight * 0.1; // 10% de tolerancia
+          
+          if (difference <= tolerance && scaleState.weight > 10) {
+            // Peso alcanzado, notificar
+            broadcastToClients({
+              type: 'target_weight_reached',
+              current_weight: scaleState.weight,
+              target_weight: scaleState.targetWeight,
+              difference: difference
+            });
+          }
+        }
       }
 
-      if (data.type === 'weighing_complete') {
-        scaleState.weight = data.weight;
+       if (data.type === 'weighing_complete') {
+        scaleState.weight = parseFloat(data.weight) || 0;
+        scaleState.isWeighing = false;
         scaleState.lastUpdate = new Date();
-        console.log('✅ Pesado completado:', data.weight, 'g');
+        console.log('✅ Pesado completado:', scaleState.weight, 'g');
+        
+        broadcastToClients({
+          type: 'weighing_completed',
+          final_weight: scaleState.weight,
+          food_info: scaleState.currentFood
+        });
       }
+
+      if (data.type === 'scale_calibrated') {
+        scaleState.calibrated = true;
+        console.log('✅ Báscula calibrada');
+        
+        broadcastToClients({
+          type: 'scale_calibrated',
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const broadcastToClients = (message) => {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(message));
+    }
+  });
+};
       
       // === PODÓMETRO ESP32 ===
       if (data.type === 'pedometer_connect') {
@@ -2084,15 +2131,20 @@ app.get('/api/user/profile/:id_cli', async (req, res) => {
 // ENDPOINTS IOT - BÁSCULA INTELIGENTE Y PODÓMETRO ESP32
 // =============================================================================
 
+
 // GET /api/iot/scale/status - Estado de la báscula
 app.get('/api/iot/scale/status', (req, res) => {
   res.json({
+    success: true,
     connected: scaleState.connected,
+    weight: scaleState.weight,
     lastUpdate: scaleState.lastUpdate,
-    calibrated: scaleState.calibrated
+    calibrated: scaleState.calibrated,
+    isWeighing: scaleState.isWeighing,
+    currentFood: scaleState.currentFood,
+    targetWeight: scaleState.targetWeight
   });
 });
-
 // GET /api/iot/pedometer/status - Estado del podómetro ESP32
 app.get('/api/iot/pedometer/status', (req, res) => {
   res.json({
@@ -2106,6 +2158,123 @@ app.get('/api/iot/pedometer/status', (req, res) => {
     batteryLevel: pedometerState.batteryLevel,
     progressPercentage: ((pedometerState.steps / pedometerState.dailyGoal) * 100).toFixed(1)
   });
+});
+
+app.post('/api/iot/scale/status', (req, res) => {
+  try {
+    const { 
+      device_id, 
+      weight, 
+      connected, 
+      calibrated, 
+      is_weighing, 
+      target_weight, 
+      food_name,
+      weight_difference,
+      target_reached,
+      timestamp 
+    } = req.body;
+
+    console.log('⚖️ Estado actualizado desde ESP32:', {
+      device_id,
+      weight,
+      connected,
+      is_weighing
+    });
+
+    // Actualizar estado global de la báscula
+    scaleState.connected = connected || false;
+    scaleState.weight = parseFloat(weight) || 0;
+    scaleState.calibrated = calibrated || false;
+    scaleState.isWeighing = is_weighing || false;
+    scaleState.lastUpdate = new Date();
+
+    if (is_weighing) {
+      scaleState.targetWeight = parseFloat(target_weight) || 0;
+      scaleState.currentFood = {
+        name: food_name || 'Alimento',
+        target_weight: target_weight
+      };
+    }
+
+    // Verificar si hay comandos pendientes para la báscula
+    let comandoPendiente = null;
+    
+    // Aquí puedes agregar lógica para comandos pendientes
+    // Por ejemplo, verificar en base de datos si hay comandos para enviar
+
+    res.json({
+      success: true,
+      message: 'Estado actualizado',
+      timestamp: new Date().toISOString(),
+      current_state: {
+        connected: scaleState.connected,
+        weight: scaleState.weight,
+        is_weighing: scaleState.isWeighing,
+        calibrated: scaleState.calibrated
+      },
+      command: comandoPendiente // null si no hay comandos
+    });
+
+  } catch (error) {
+    console.error('❌ Error procesando estado báscula:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/iot/scale/status - Obtener estado actual (desde app)
+app.get('/api/iot/scale/status', (req, res) => {
+  try {
+    console.log('📱 Consultando estado báscula desde app');
+
+    res.json({
+      success: true,
+      connected: scaleState.connected,
+      weight: scaleState.weight,
+      lastUpdate: scaleState.lastUpdate,
+      calibrated: scaleState.calibrated,
+      isWeighing: scaleState.isWeighing,
+      currentFood: scaleState.currentFood,
+      targetWeight: scaleState.targetWeight
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo estado báscula:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estado',
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/iot/scale/status', (req, res) => {
+  try {
+    console.log('📱 Consultando estado báscula desde app');
+
+    res.json({
+      success: true,
+      connected: scaleState.connected,
+      weight: scaleState.weight,
+      lastUpdate: scaleState.lastUpdate,
+      calibrated: scaleState.calibrated,
+      isWeighing: scaleState.isWeighing,
+      currentFood: scaleState.currentFood,
+      targetWeight: scaleState.targetWeight
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo estado báscula:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estado',
+      error: error.message
+    });
+  }
 });
 
 // POST /api/iot/pedometer/command - Enviar comandos al ESP32
@@ -2945,6 +3114,460 @@ app.get('/api/iot/scale/weight', (req, res) => {
     weight: simulatedWeight,
     timestamp: scaleState.lastUpdate
   });
+});
+
+app.post('/api/iot/scale/assign', async (req, res) => {
+  try {
+    const { user_id, user_name, device_id } = req.body;
+    
+    console.log('⚖️ === ASIGNANDO BÁSCULA ===');
+    console.log('📥 Datos recibidos:', { user_id, user_name, device_id });
+    
+    if (!user_id || !user_name) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id y user_name son requeridos'
+      });
+    }
+    
+    // Verificar que el usuario existe
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      const [userRows] = await connection.execute(
+        'SELECT id_cli, CONCAT(nombre_cli, " ", app_cli) as nombre FROM clientes WHERE id_cli = ?',
+        [user_id]
+      );
+      
+      if (userRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Usuario no encontrado'
+        });
+      }
+      
+      const deviceKey = device_id || 'default';
+      
+      // Crear asignación
+      const assignment = {
+        user_id: parseInt(user_id),
+        user_name: user_name,
+        device_id: deviceKey,
+        assigned_at: new Date().toISOString(),
+        status: 'active'
+      };
+      
+      // Guardar asignación
+      connectedScales.set(deviceKey, assignment);
+      
+      console.log('✅ Báscula asignada:', assignment);
+      
+      res.json({
+        success: true,
+        message: 'Usuario asignado a la báscula exitosamente',
+        assignment: assignment
+      });
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error asignando báscula:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/iot/scale/release', async (req, res) => {
+  try {
+    const { device_id, user_id } = req.body;
+    
+    console.log('⚖️ === LIBERANDO BÁSCULA ===');
+    console.log('📥 Datos recibidos:', { device_id, user_id });
+    
+    const deviceKey = device_id || 'default';
+    const assignment = connectedScales.get(deviceKey);
+    
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: 'No hay báscula asignada'
+      });
+    }
+    
+    // Verificar permisos
+    if (user_id && assignment.user_id !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para liberar esta báscula'
+      });
+    }
+    
+    console.log('✅ Liberando báscula de usuario:', assignment.user_name);
+       // Limpiar estado
+    scaleState.isWeighing = false;
+    scaleState.currentFood = null;
+    scaleState.targetWeight = 0;
+    
+    // Remover asignación
+    connectedScales.delete(deviceKey);
+    
+    res.json({
+      success: true,
+      message: 'Báscula liberada exitosamente',
+      former_assignment: assignment
+    });
+    
+  } catch (error) {
+    console.error('❌ Error liberando báscula:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
+app.get('/api/iot/scale/assignments', (req, res) => {
+  try {
+    const assignments = Array.from(connectedScales.values());
+    
+    console.log('⚖️ === CONSULTANDO ASIGNACIONES BÁSCULA ===');
+    console.log('📋 Asignaciones activas:', assignments.length);
+    
+    res.json({
+      success: true,
+      total_assignments: assignments.length,
+      assignments: assignments.map(assignment => ({
+        user_id: assignment.user_id,
+        user_name: assignment.user_name,
+        device_id: assignment.device_id,
+        assigned_at: assignment.assigned_at,
+        status: assignment.status,
+        duration_minutes: Math.round((new Date() - new Date(assignment.assigned_at)) / (1000 * 60))
+      }))
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo asignaciones báscula:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo asignaciones',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/iot/scale/available - Verificar disponibilidad
+app.get('/api/iot/scale/available', (req, res) => {
+  try {
+    const totalDevices = 2; // Simular 2 básculas disponibles
+    const assignedDevices = connectedScales.size;
+    const availableDevices = Math.max(0, totalDevices - assignedDevices);
+    
+    console.log('⚖️ === BÁSCULAS DISPONIBLES ===');
+    console.log('📊 Total:', totalDevices, 'Asignadas:', assignedDevices, 'Disponibles:', availableDevices);
+    
+    res.json({
+      success: true,
+      total_devices: totalDevices,
+      assigned_devices: assignedDevices,
+      available_devices: availableDevices,
+      devices: Array.from(connectedScales.keys())
+    });
+    
+  } catch (error) {
+    console.error('❌ Error verificando disponibilidad báscula:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verificando disponibilidad',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/iot/scale/start-weighing - Iniciar proceso de pesado
+app.post('/api/iot/scale/start-weighing', async (req, res) => {
+  try {
+    const { 
+      user_id,
+      device_id,
+      food_name,
+      target_weight,
+      food_calories_per_100g,
+      food_info 
+    } = req.body;
+    
+    console.log('⚖️ === INICIANDO PESADO ===');
+    console.log('📥 Datos:', { user_id, food_name, target_weight });
+    
+    const deviceKey = device_id || 'default';
+    const assignment = connectedScales.get(deviceKey);
+    
+    if (!assignment || assignment.user_id !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes una báscula asignada'
+      });
+    }
+    
+    if (!scaleState.connected) {
+      return res.status(400).json({
+        success: false,
+        message: 'La báscula no está conectada'
+      });
+    }
+    
+    // Configurar estado de pesado
+    scaleState.isWeighing = true;
+    scaleState.currentFood = {
+      name: food_name,
+      calories_per_100g: food_calories_per_100g,
+      ...food_info
+    };
+    scaleState.targetWeight = parseFloat(target_weight) || 100;
+    
+    // Enviar comando a la báscula
+    const command = {
+      type: 'start_weighing',
+      food_name: food_name,
+      target_weight: scaleState.targetWeight,
+      user_id: user_id,
+      timestamp: new Date().toISOString()
+    };
+    
+    broadcastToClients(command);
+    
+    console.log('✅ Pesado iniciado para:', food_name, 'objetivo:', target_weight + 'g');
+    
+    res.json({
+      success: true,
+      message: 'Proceso de pesado iniciado',
+      target_weight: scaleState.targetWeight,
+      current_weight: scaleState.weight,
+      food_info: scaleState.currentFood
+    });
+    
+  } catch (error) {
+    console.error('❌ Error iniciando pesado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error iniciando proceso de pesado',
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/iot/scale/weighing-complete', (req, res) => {
+  try {
+    const { device_id, final_weight, timestamp } = req.body;
+
+    console.log('✅ Pesado completado:', {
+      device_id,
+      final_weight,
+      timestamp
+    });
+
+    // Actualizar estado
+    scaleState.isWeighing = false;
+    scaleState.weight = parseFloat(final_weight) || 0;
+    scaleState.currentFood = null;
+    scaleState.targetWeight = 0;
+    scaleState.lastUpdate = new Date();
+
+    res.json({
+      success: true,
+      message: 'Pesado completado registrado',
+      final_weight: final_weight
+    });
+
+  } catch (error) {
+    console.error('❌ Error procesando pesado completado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error procesando pesado completado',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/iot/scale/target-reached - Peso objetivo alcanzado (desde ESP32)
+app.post('/api/iot/scale/target-reached', (req, res) => {
+  try {
+    const { device_id, current_weight, target_weight, timestamp } = req.body;
+
+    console.log('🎯 Peso objetivo alcanzado:', {
+      device_id,
+      current_weight,
+      target_weight
+    });
+
+    // Actualizar estado
+    scaleState.weight = parseFloat(current_weight) || 0;
+    scaleState.lastUpdate = new Date();
+
+    // Aquí podrías notificar a la app móvil vía WebSocket o similar
+    console.log(`🔔 Notificación: Peso ${current_weight}g alcanzado (objetivo: ${target_weight}g)`);
+
+    res.json({
+      success: true,
+      message: 'Peso objetivo alcanzado registrado'
+    });
+
+  } catch (error) {
+    console.error('❌ Error procesando peso objetivo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error procesando peso objetivo',
+      error: error.message
+    });
+  }
+});
+
+
+// POST /api/iot/scale/stop-weighing - Detener pesado
+app.post('/api/iot/scale/stop-weighing', async (req, res) => {
+  try {
+    const { user_id, device_id } = req.body;
+    
+    const deviceKey = device_id || 'default';
+    const assignment = connectedScales.get(deviceKey);
+    
+    if (!assignment || assignment.user_id !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No autorizado'
+      });
+    }
+    
+    // Limpiar estado
+    scaleState.isWeighing = false;
+    scaleState.currentFood = null;
+    scaleState.targetWeight = 0;
+    
+    // Enviar comando a la báscula
+    broadcastToClients({
+      type: 'stop_weighing',
+      timestamp: new Date().toISOString()
+    });
+    
+    res.json({
+      success: true,
+      message: 'Pesado detenido',
+      final_weight: scaleState.weight
+    });
+    
+  } catch (error) {
+    console.error('❌ Error deteniendo pesado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deteniendo pesado',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/iot/scale/tare - Tarar báscula
+app.post('/api/iot/scale/tare', async (req, res) => {
+  try {
+    const { user_id, device_id } = req.body;
+    
+    const deviceKey = device_id || 'default';
+    const assignment = connectedScales.get(deviceKey);
+    
+    if (!assignment || assignment.user_id !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No autorizado'
+      });
+    }
+    
+    if (!scaleState.connected) {
+      return res.status(400).json({
+        success: false,
+        message: 'Báscula no conectada'
+      });
+    }
+    
+    // Enviar comando de tara
+    broadcastToClients({
+      type: 'tare_scale',
+      timestamp: new Date().toISOString()
+    });
+    
+    console.log('⚖️ Comando de tara enviado');
+    
+    res.json({
+      success: true,
+      message: 'Comando de tara enviado a la báscula'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error enviando tara:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error enviando comando de tara',
+      error: error.message
+    });
+  }
+});
+
+setInterval(() => {
+  const now = new Date();
+  const ASSIGNMENT_TIMEOUT = 4 * 60 * 60 * 1000; // 4 horas para básculas
+  
+  for (const [deviceId, assignment] of connectedScales.entries()) {
+    if (now - new Date(assignment.assigned_at) > ASSIGNMENT_TIMEOUT) {
+      console.log(`⏰ Liberando báscula ${deviceId} por timeout`);
+      connectedScales.delete(deviceId);
+      
+      // Limpiar estado si era esta báscula
+      if (scaleState.isWeighing) {
+        scaleState.isWeighing = false;
+        scaleState.currentFood = null;
+        scaleState.targetWeight = 0;
+      }
+      
+      // Notificar liberación por timeout
+      broadcastToClients({
+        type: 'scale_assignment_timeout',
+        device_id: deviceId,
+        former_user_id: assignment.user_id
+      });
+    }
+  }
+}, 60 * 60 * 1000);
+
+app.post('/api/iot/scale/tare-complete', (req, res) => {
+  try {
+    const { device_id, timestamp } = req.body;
+
+    console.log('🔄 Tara completada:', {
+      device_id,
+      timestamp
+    });
+
+    // Actualizar estado
+    scaleState.weight = 0;
+    scaleState.calibrated = true;
+    scaleState.lastUpdate = new Date();
+
+    res.json({
+      success: true,
+      message: 'Tara registrada'
+    });
+
+  } catch (error) {
+    console.error('❌ Error procesando tara:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error procesando tara',
+      error: error.message
+    });
+  }
 });
 
 // POST /api/iot/scale/send - Enviar datos a la báscula
