@@ -30,61 +30,61 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    
-    console.log('❌ Origin no permitido:', origin);
-    return callback(new Error('No permitido por CORS'));
+console.log('❌ Origin bloqueado:', origin);
+    return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type', 
-    'Authorization', 
-    'Accept', 
-    'Origin', 
-    'X-Requested-With',
-    'Access-Control-Allow-Origin'
+    'Authorization'
+    // 'Accept', 
+    // 'Origin', 
+    // 'X-Requested-With',
+    // 'Access-Control-Allow-Origin'
   ],
-  credentials: true,
-  optionsSuccessStatus: 200
+  credentials: false,
+  // optionsSuccessStatus: 200
 }));
 
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.sendStatus(200);
-});
+// app.options('*', (req, res) => {
+//   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+//   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+//   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+//   res.header('Access-Control-Allow-Credentials', 'true');
+//   res.sendStatus(200);
+// });
 
 
 
 // Middleware adicional para headers CORS
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+// app.use((req, res, next) => {
+//   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+//   res.header('Access-Control-Allow-Credentials', 'true');
+//   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+//   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
   
-  // Log para debugging
-  if (req.method === 'OPTIONS') {
-    console.log('🔧 Preflight request from:', req.headers.origin);
-  }
+//   // Log para debugging
+//   if (req.method === 'OPTIONS') {
+//     console.log('🔧 Preflight request from:', req.headers.origin);
+//   }
   
-  next();
-});
+//   next();
+// });
 
 app.use(express.json());
 
 
 app.post('/api/test-cors', (req, res) => {
   console.log('🧪 Test CORS - Origin:', req.headers.origin);
+  console.log('🧪 Test CORS - Method:', req.method);
   console.log('🧪 Test CORS - Headers:', req.headers);
   console.log('🧪 Test CORS - Body:', req.body);
   
   res.json({
     success: true,
     message: 'CORS funcionando',
-    origin: req.headers.origin,
-    method: req.method
+    receivedData: req.body,
+    origin: req.headers.origin
   });
 });
 
@@ -3737,6 +3737,11 @@ app.get('/api/mysql-test', async (req, res) => {
 
 
 app.post('/api/login', async (req, res) => {
+   console.log('🔐 === LOGIN REQUEST ===');
+  console.log('Origin:', req.headers.origin);
+  console.log('Method:', req.method);
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
   try {
     console.log('=== LOGIN ATTEMPT ===');
     const { correo, password } = req.body;
