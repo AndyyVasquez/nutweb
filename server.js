@@ -11,27 +11,77 @@ const app = express();
 
 // Configuración de CORS
 app.use(cors({
-  origin: [
-    'https://integradora1.com',
-    'https://www.integradora1.com',
-    'http://localhost:3000',
-    'http://localhost:3001',
-    '*'
-  ],
+  origin: function(origin, callback) {
+    // Permitir requests sin origin (Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'https://integradora1.com',
+      'https://www.integradora1.com',
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'https://nutweb.onrender.com'
+    ];
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    console.log('❌ Origin no permitido:', origin);
+    return callback(new Error('No permitido por CORS'));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'Accept', 
+    'Origin', 
+    'X-Requested-With',
+    'Access-Control-Allow-Origin'
+  ],
   credentials: true,
-  optionsSuccessStatus: 200 
+  optionsSuccessStatus: 200
 }));
 
-app.options('*', cors());
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
+
+
+
+// Middleware adicional para headers CORS
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+  
+  // Log para debugging
+  if (req.method === 'OPTIONS') {
+    console.log('🔧 Preflight request from:', req.headers.origin);
+  }
+  
+  next();
+});
+
 app.use(express.json());
 
-// Middleware de logging
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path}`);
-  console.log('Raw body:', req.body);
-  next();
+
+app.post('/api/test-cors', (req, res) => {
+  console.log('🧪 Test CORS - Origin:', req.headers.origin);
+  console.log('🧪 Test CORS - Headers:', req.headers);
+  console.log('🧪 Test CORS - Body:', req.body);
+  
+  res.json({
+    success: true,
+    message: 'CORS funcionando',
+    origin: req.headers.origin,
+    method: req.method
+  });
 });
 
 // Configuración de base de datos MySQL desde .env
