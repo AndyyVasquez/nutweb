@@ -3999,96 +3999,96 @@ app.use((error, req, res, next) => {
 
 
 //APIS WEB
-// app.post('/api/nutriologos/login', async (req, res) => {
-//   try {
-//     const { correo, password } = req.body;
+app.post('/api/nutriologos/login', async (req, res) => {
+  try {
+    const { correo, password } = req.body;
 
-//     const connection = await mysql.createConnection(dbConfig);
+    const connection = await mysql.createConnection(dbConfig);
     
-//     try {
-//       // Buscar en nutriólogos
-//       const [nutriResults] = await connection.execute(
-//         `SELECT id_nut AS id, nombre_nut AS nombre, password, token, verificado, tiene_acceso, tipo_usu, 'nutriologo' AS rol 
-//          FROM nutriologos WHERE correo = ?`,
-//         [correo]
-//       );
+    try {
+      // Buscar en nutriólogos
+      const [nutriResults] = await connection.execute(
+        `SELECT id_nut AS id, nombre_nut AS nombre, password, token, verificado, tiene_acceso, tipo_usu, 'nutriologo' AS rol 
+         FROM nutriologos WHERE correo = ?`,
+        [correo]
+      );
 
-//       if (nutriResults.length > 0) {
-//         const nutri = nutriResults[0];
+      if (nutriResults.length > 0) {
+        const nutri = nutriResults[0];
         
-//         if (nutri.verificado == 'pendiente') {
-//           return res.status(403).json({ error: 'Solicitud de registro aún no ha aprobada. Intenta más tarde.' });
-//         }
+        if (nutri.verificado == 'pendiente') {
+          return res.status(403).json({ error: 'Solicitud de registro aún no ha aprobada. Intenta más tarde.' });
+        }
         
-//         if (nutri.verificado == 'denegado') {
-//           return res.status(403).json({ error: 'Solicitud de registro denegada. Si crees que se trata de un error favor de comunicarse con soporte através de nutralis@gmail.com' });
-//         }
+        if (nutri.verificado == 'denegado') {
+          return res.status(403).json({ error: 'Solicitud de registro denegada. Si crees que se trata de un error favor de comunicarse con soporte através de nutralis@gmail.com' });
+        }
 
-//         if (nutri.token) {
-//           return res.status(403).json({ error: 'Sesión ya activa' });
-//         }
+        if (nutri.token) {
+          return res.status(403).json({ error: 'Sesión ya activa' });
+        }
 
-//         const match = await bcrypt.compare(password, nutri.password);
-//         if (!match) return res.status(401).json({ error: 'Contraseña incorrecta' });
+        const match = await bcrypt.compare(password, nutri.password);
+        if (!match) return res.status(401).json({ error: 'Contraseña incorrecta' });
 
-//         const newToken = uuidv4();
-//         await connection.execute(
-//           `UPDATE nutriologos SET token = ? WHERE id_nut = ?`,
-//           [newToken, nutri.id]
-//         );
+        const newToken = uuidv4();
+        await connection.execute(
+          `UPDATE nutriologos SET token = ? WHERE id_nut = ?`,
+          [newToken, nutri.id]
+        );
 
-//         res.json({
-//           message: 'Inicio de sesión exitoso (nutriólogo)',
-//           id_nut: nutri.id,
-//           nombre: nutri.nombre,
-//           token: newToken,
-//           tipo_usu: nutri.tipo_usu,
-//           rol: 'nutriologo'
-//         });
-//       } else {
-//         // Buscar en administradores
-//         const [adminResults] = await connection.execute(
-//           `SELECT id_admin AS id, nombre_admin AS nombre, password, token, tipo_usu, 'admin' AS rol 
-//            FROM administradores WHERE correo = ?`,
-//           [correo]
-//         );
+        res.json({
+          message: 'Inicio de sesión exitoso (nutriólogo)',
+          id_nut: nutri.id,
+          nombre: nutri.nombre,
+          token: newToken,
+          tipo_usu: nutri.tipo_usu,
+          rol: 'nutriologo'
+        });
+      } else {
+        // Buscar en administradores
+        const [adminResults] = await connection.execute(
+          `SELECT id_admin AS id, nombre_admin AS nombre, password, token, tipo_usu, 'admin' AS rol 
+           FROM administradores WHERE correo = ?`,
+          [correo]
+        );
 
-//         if (adminResults.length === 0) {
-//           return res.status(404).json({ error: 'Correo no registrado' });
-//         }
+        if (adminResults.length === 0) {
+          return res.status(404).json({ error: 'Correo no registrado' });
+        }
 
-//         const admin = adminResults[0];
+        const admin = adminResults[0];
 
-//         if (admin.token) {
-//           return res.status(403).json({ error: 'Sesión ya activa en otro dispositivo' });
-//         }
+        if (admin.token) {
+          return res.status(403).json({ error: 'Sesión ya activa en otro dispositivo' });
+        }
 
-//         const match = await bcrypt.compare(password, admin.password);
-//         if (!match) return res.status(401).json({ error: 'Contraseña incorrecta' });
+        const match = await bcrypt.compare(password, admin.password);
+        if (!match) return res.status(401).json({ error: 'Contraseña incorrecta' });
 
-//         const newToken = uuidv4();
-//         await connection.execute(
-//           `UPDATE administradores SET token = ? WHERE id_admin = ?`,
-//           [newToken, admin.id]
-//         );
+        const newToken = uuidv4();
+        await connection.execute(
+          `UPDATE administradores SET token = ? WHERE id_admin = ?`,
+          [newToken, admin.id]
+        );
 
-//         res.json({
-//           message: 'Inicio de sesión exitoso (administrador)',
-//           id_nut: admin.id,
-//           nombre: admin.nombre,
-//           token: newToken,
-//           tipo_usu: admin.tipo_usu,
-//           rol: 'admin'
-//         });
-//       }
-//     } finally {
-//       await connection.end();
-//     }
-//   } catch (error) {
-//     console.error('Error en login web:', error);
-//     res.status(500).json({ error: 'Error en el servidor' });
-//   }
-// });
+        res.json({
+          message: 'Inicio de sesión exitoso (administrador)',
+          id_nut: admin.id,
+          nombre: admin.nombre,
+          token: newToken,
+          tipo_usu: admin.tipo_usu,
+          rol: 'admin'
+        });
+      }
+    } finally {
+      await connection.end();
+    }
+  } catch (error) {
+    console.error('Error en login web:', error);
+    res.status(500).json({ error: 'Error en el servidor' });
+  }
+});
 
 app.post('/api/nutriologos/login-google', async (req, res) => {
   try {
