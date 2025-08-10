@@ -20,14 +20,18 @@ app.use(cors({
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
-      'https://integradora1.com',
+     'https://integradora1.com',
       'https://www.integradora1.com',
       'http://localhost:3000',
       'http://localhost:3001',
-      'https://nutweb.onrender.com'
+      'https://nutweb.onrender.com',
+      'https://svgl135.cloud-mx-ns.net',
+      'http://svgl135.cloud-mx-ns.net',
+      'https://integradora1.com',
     ];
     
     if (allowedOrigins.includes(origin)) {
+      console.log('✅ Origin permitido:', origin);
       return callback(null, true);
     }
 console.log('❌ Origin bloqueado:', origin);
