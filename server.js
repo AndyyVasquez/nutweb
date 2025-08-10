@@ -12,13 +12,19 @@ const app = express();
 // Configuración de CORS
 app.use(cors({
   origin: [
+    'https://integradora1.com',
+    'https://www.integradora1.com',
+    'http://localhost:3000',
+    'http://localhost:3001',
     '*'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  credentials: true
+  credentials: true,
+  optionsSuccessStatus: 200 
 }));
 
+app.options('*', cors());
 app.use(express.json());
 
 // Middleware de logging
@@ -3798,7 +3804,6 @@ app.post('/api/logout', (req, res) => {
 });
 
 //registro web
-
 app.post('/api/nutriologos/registro', async (req, res) => {
   try {
     const {
