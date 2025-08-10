@@ -3797,6 +3797,240 @@ app.post('/api/logout', (req, res) => {
   });
 });
 
+//registro web
+
+app.post('/api/nutriologos/registro', async (req, res) => {
+  try {
+    const {
+      nombre_nut,
+      app_nut,
+      apm_nut,
+      correo,
+      password,
+      cedula_nut,
+      especialidad_nut,
+      telefono_nut,
+      token_vinculacion
+    } = req.body;
+
+    console.log('📝 Datos recibidos para registro de nutriólogo:', req.body);
+
+    // Validar campos obligatorios
+    if (!nombre_nut || !app_nut || !correo || !password || !cedula_nut || !telefono_nut) {
+      console.log('❌ Faltan datos obligatorios');
+      return res.status(400).json({
+        success: false,
+        error: 'Faltan datos obligatorios: nombre, apellido paterno, correo, contraseña, cédula y teléfono son requeridos'
+      });
+    }
+
+    // Validar formato de correo
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(correo)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Formato de correo electrónico inválido'
+      });
+    }
+
+    // Validar longitud de contraseña
+    if (password.length < 5) {
+      return res.status(400).json({
+        success: false,
+        error: 'La contraseña debe tener al menos 5 caracteres'
+      });
+    }
+
+    const connection = await mysql.createConnection(dbConfig);
+
+    try {
+      // Verificar si el correo ya existe
+      const [existingUser] = await connection.execute(
+        'SELECT correo FROM nutriologos WHERE correo = ?',
+        [correo]
+      );
+
+      if (existingUser.length > 0) {
+        console.log('❌ Correo ya registrado:', correo);
+        return res.status(409).json({
+          success: false,
+          error: 'Este correo electrónico ya está registrado'
+        });
+      }
+
+      // Verificar si la cédula ya existe
+      const [existingCedula] = await connection.execute(
+        'SELECT cedula_nut FROM nutriologos WHERE cedula_nut = ?',
+        [cedula_nut]
+      );
+
+      if (existingCedula.length > 0) {
+        console.log('❌ Cédula ya registrada:', cedula_nut);
+        return res.status(409).json({
+          success: false,
+          error: 'Esta cédula profesional ya está registrada'
+        });
+      }
+
+      // Verificar si el token ya existe (si se proporciona)
+      if (token_vinculacion) {
+        const [existingToken] = await connection.execute(
+          'SELECT token_vinculacion FROM nutriologos WHERE token_vinculacion = ?',
+          [token_vinculacion]
+        );
+
+        if (existingToken.length > 0) {
+          console.log('❌ Token ya existe, generando uno nuevo');
+          token_vinculacion = `AUTO${Date.now()}${Math.floor(Math.random() * 1000)}`;
+        }
+      }
+
+      // Insertar el nuevo nutriólogo usando los campos exactos de tu tabla
+      const [result] = await connection.execute(
+        `INSERT INTO nutriologos (
+          tipo_usu, nombre_nut, app_nut, apm_nut, correo, password, 
+          cedula_nut, especialidad_nut, telefono_nut, token_vinculacion,
+          activo, tiene_acceso, verificado
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          1, // tipo_usu: 1 para nutriólogos
+          nombre_nut,
+          app_nut,
+          apm_nut || '', // apm_nut puede ser vacío
+          correo,
+          password, // En producción, deberías hashear la contraseña
+          cedula_nut,
+          especialidad_nut || null, // especialidad_nut es opcional
+          telefono_nut,
+          token_vinculacion || `AUTO${Date.now()}${Math.floor(Math.random() * 1000)}`,
+          1, // activo: 1 (verdadero)
+          0, // tiene_acceso: 0 (falso) hasta que sea aprobado
+          'pendiente' // verificado: pendiente por defecto
+        ]
+      );
+
+      console.log('✅ Nutriólogo registrado exitosamente. ID:', result.insertId);
+
+      res.status(201).json({
+        success: true,
+        message: 'Registro exitoso. Tu solicitud está pendiente de aprobación.',
+        nutriologoId: result.insertId,
+        status: 'pending_approval'
+      });
+
+    } finally {
+      await connection.end();
+    }
+
+  } catch (error) {
+    console.error('❌ Error en registro de nutriólogo:', error);
+    
+    // Manejar errores específicos de MySQL
+    if (error.code === 'ER_DUP_ENTRY') {
+      if (error.message.includes('correo')) {
+        return res.status(409).json({
+          success: false,
+          error: 'Este correo electrónico ya está registrado'
+        });
+      } else if (error.message.includes('token_vinculacion')) {
+        return res.status(409).json({
+          success: false,
+          error: 'Error con el token de vinculación. Intenta de nuevo.'
+        });
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor. Intenta de nuevo más tarde.'
+    });
+  }
+});
+
+app.post('/api/nutriologos/login', async (req, res) => {
+  try {
+    const { correo, password } = req.body;
+
+    if (!correo || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Correo y contraseña son requeridos'
+      });
+    }
+
+    const connection = await mysql.createConnection(dbConfig);
+
+    try {
+      const [users] = await connection.execute(
+        'SELECT * FROM nutriologos WHERE correo = ? AND password = ? AND activo = 1',
+        [correo, password]
+      );
+
+      if (users.length === 0) {
+        return res.status(401).json({
+          success: false,
+          error: 'Credenciales incorrectas'
+        });
+      }
+
+      const user = users[0];
+
+      // Verificar estado de verificación
+      if (user.verificado === 'pendiente') {
+        return res.status(403).json({
+          success: false,
+          error: 'Tu cuenta está pendiente de aprobación. Te notificaremos por correo cuando sea aprobada.'
+        });
+      }
+
+      if (user.verificado === 'denegado') {
+        return res.status(403).json({
+          success: false,
+          error: 'Tu solicitud de registro ha sido denegada. Contacta a soporte para más información.'
+        });
+      }
+
+      // Verificar si tiene acceso activo
+      if (!user.tiene_acceso) {
+        return res.status(403).json({
+          success: false,
+          error: 'Tu cuenta no tiene acceso activo. Verifica tu suscripción.'
+        });
+      }
+
+      // Login exitoso
+      res.json({
+        success: true,
+        message: 'Login exitoso',
+        user: {
+          id: user.id_nut,
+          nombre: user.nombre_nut,
+          apellidos: `${user.app_nut} ${user.apm_nut || ''}`.trim(),
+          correo: user.correo,
+          cedula: user.cedula_nut,
+          especialidad: user.especialidad_nut,
+          telefono: user.telefono_nut,
+          verificado: user.verificado,
+          tiene_acceso: user.tiene_acceso,
+          fecha_inicio_sub: user.fecha_inicio_sub,
+          fecha_fin_sub: user.fecha_fin_sub
+        }
+      });
+
+    } finally {
+      await connection.end();
+    }
+
+  } catch (error) {
+    console.error('❌ Error en login:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor'
+    });
+  }
+});
+
+
 app.post('/api/register-client', async (req, res) => {
   try {
     const {
