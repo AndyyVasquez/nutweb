@@ -3896,6 +3896,202 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+app.post('/api/admin/hash-passwords', async (req, res) => {
+  try {
+    console.log('🔐 === INICIANDO PROCESO DE HASHEO ===');
+    
+    const { secret_key } = req.body;
+    
+    // Verificar clave secreta para seguridad
+    if (secret_key !== 'HASH_PASSWORDS_SECRET_2025') {
+      return res.status(403).json({
+        success: false,
+        message: 'Clave secreta incorrecta'
+      });
+    }
+
+    const adminsToUpdate = [
+      { id: 1, password: 'NutrAlis123' },
+      { id: 2, password: 'NutrAlis123' },
+      { id: 3, password: 'NutrAlis123' },
+    ];
+
+    const connection = await mysql.createConnection(dbConfig);
+    const results = [];
+
+    try {
+      for (const admin of adminsToUpdate) {
+        try {
+          console.log(`🔐 Hasheando contraseña para admin ${admin.id}...`);
+          
+          // Hashear la contraseña
+          const hashedPassword = await bcrypt.hash(admin.password, 10);
+          
+          // Actualizar en la base de datos
+          const [result] = await connection.execute(
+            'UPDATE administradores SET password = ? WHERE id_admin = ?',
+            [hashedPassword, admin.id]
+          );
+
+          if (result.affectedRows > 0) {
+            console.log(`✅ Contraseña actualizada para admin ${admin.id}`);
+            results.push({
+              admin_id: admin.id,
+              status: 'success',
+              message: 'Contraseña hasheada exitosamente'
+            });
+          } else {
+            console.log(`⚠️ Admin ${admin.id} no encontrado`);
+            results.push({
+              admin_id: admin.id,
+              status: 'not_found',
+              message: 'Administrador no encontrado'
+            });
+          }
+
+        } catch (hashError) {
+          console.error(`❌ Error hasheando admin ${admin.id}:`, hashError);
+          results.push({
+            admin_id: admin.id,
+            status: 'error',
+            message: hashError.message
+          });
+        }
+      }
+
+      console.log('🔐 === PROCESO DE HASHEO COMPLETADO ===');
+
+      res.json({
+        success: true,
+        message: 'Proceso de hasheo completado',
+        results: results,
+        total_processed: adminsToUpdate.length,
+        successful: results.filter(r => r.status === 'success').length
+      });
+
+    } finally {
+      await connection.end();
+    }
+
+  } catch (error) {
+    console.error('❌ Error en proceso de hasheo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/admin/verify-passwords - Verificar si las contraseñas están hasheadas
+app.get('/api/admin/verify-passwords', async (req, res) => {
+  try {
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      const [admins] = await connection.execute(
+        'SELECT id_admin, password FROM administradores WHERE id_admin IN (1, 2, 3)'
+      );
+
+      const verification = admins.map(admin => {
+        const isHashed = admin.password.startsWith('$2b$') || admin.password.startsWith('$2a$');
+        return {
+          admin_id: admin.id_admin,
+          password_length: admin.password.length,
+          is_hashed: isHashed,
+          password_preview: admin.password.substring(0, 10) + '...'
+        };
+      });
+
+      res.json({
+        success: true,
+        admins: verification,
+        all_hashed: verification.every(v => v.is_hashed)
+      });
+
+    } finally {
+      await connection.end();
+    }
+
+  } catch (error) {
+    console.error('❌ Error verificando contraseñas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verificando contraseñas',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/admin/hash-single-password - Hashear una contraseña individual
+app.post('/api/admin/hash-single-password', async (req, res) => {
+  try {
+    const { password, user_type, user_id, secret_key } = req.body;
+    
+    if (secret_key !== 'HASH_PASSWORDS_SECRET_2025') {
+      return res.status(403).json({
+        success: false,
+        message: 'Clave secreta incorrecta'
+      });
+    }
+
+    if (!password || !user_type || !user_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Faltan parámetros: password, user_type, user_id'
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const connection = await mysql.createConnection(dbConfig);
+
+    try {
+      let query = '';
+      let params = [hashedPassword, user_id];
+
+      switch (user_type) {
+        case 'admin':
+          query = 'UPDATE administradores SET password = ? WHERE id_admin = ?';
+          break;
+        case 'nutriologo':
+          query = 'UPDATE nutriologos SET password = ? WHERE id_nut = ?';
+          break;
+        case 'cliente':
+          query = 'UPDATE clientes SET password_cli = ? WHERE id_cli = ?';
+          break;
+        default:
+          throw new Error('Tipo de usuario no válido');
+      }
+
+      const [result] = await connection.execute(query, params);
+
+      if (result.affectedRows > 0) {
+        res.json({
+          success: true,
+          message: `Contraseña hasheada para ${user_type} ${user_id}`,
+          hash_preview: hashedPassword.substring(0, 20) + '...'
+        });
+      } else {
+        res.status(404).json({
+          success: false,
+          message: 'Usuario no encontrado'
+        });
+      }
+
+    } finally {
+      await connection.end();
+    }
+
+  } catch (error) {
+    console.error('❌ Error hasheando contraseña individual:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
+  }
+});
+
 app.post('/api/logout', (req, res) => {
   res.json({
     success: true,
