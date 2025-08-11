@@ -4886,52 +4886,63 @@ app.get('/api/obdietas/:id_cliente', async (req, res) => {
   }
 });
 
-
-app.post('/api/clientes-por-nutriologo', async (req, res) => {
+app.post("/api/clientes-por-nutriologo", async (req, res) => {
   try {
     const { idNutriologo } = req.body;
 
     if (!idNutriologo || isNaN(idNutriologo)) {
-      return res.status(400).json({ error: 'ID de nutriólogo inválido' });
+      return res.status(400).json({ error: "ID de nutriólogo inválido" });
     }
 
     const connection = await mysql.createConnection(dbConfig);
-    
+
     try {
       const [clientes] = await connection.execute(
-        `SELECT c.*, a.motivo, a.heredo_familiares, a.no_patologicos, a.patologicos, 
-         a.alergias, a.aversiones, a.fecha_registro AS fecha_registro_antecedentes
-         FROM clientes c
-         LEFT JOIN antecedentes_medicos a ON c.id_cli = a.id_cli
-         WHERE c.id_nut = ?
-         ORDER BY c.id_cli, a.fecha_registro DESC`,
+        `SELECT 
+          c.*, 
+          f.motivo, 
+          f.antecedentes_heredofamiliares, 
+          f.antecedentes_personales_no_patologicos, 
+          f.antecedentes_personales_patologicos, 
+          f.alergias_intolerancias, 
+          f.aversiones_alimentarias,
+          f.fecha_envio AS fecha_registro_antecedentes
+        FROM 
+          clientes c
+        LEFT JOIN 
+          formularios_nutricion f ON c.id_cli = f.id_cliente
+        WHERE 
+          c.id_nut = ?
+        ORDER BY 
+          c.id_cli, f.fecha_envio DESC`,
         [idNutriologo]
       );
 
-      // Agrupar antecedentes por cliente
+      // Agrupar los antecedentes médicos por cliente
       const clientesAgrupados = clientes.reduce((acc, row) => {
         if (!acc[row.id_cli]) {
           acc[row.id_cli] = {
             ...row,
             antecedentes: []
           };
+          // Eliminar campos del formulario para evitar repetición
           delete acc[row.id_cli].motivo;
-          delete acc[row.id_cli].heredo_familiares;
-          delete acc[row.id_cli].no_patologicos;
-          delete acc[row.id_cli].patologicos;
-          delete acc[row.id_cli].alergias;
-          delete acc[row.id_cli].aversiones;
+          delete acc[row.id_cli].antecedentes_heredofamiliares;
+          delete acc[row.id_cli].antecedentes_personales_no_patologicos;
+          delete acc[row.id_cli].antecedentes_personales_patologicos;
+          delete acc[row.id_cli].alergias_intolerancias;
+          delete acc[row.id_cli].aversiones_alimentarias;
           delete acc[row.id_cli].fecha_registro_antecedentes;
         }
 
         if (row.motivo) {
           acc[row.id_cli].antecedentes.push({
             motivo: row.motivo,
-            heredo_familiares: row.heredo_familiares,
-            no_patologicos: row.no_patologicos,
-            patologicos: row.patologicos,
-            alergias: row.alergias,
-            aversiones: row.aversiones,
+            heredo_familiares: row.antecedentes_heredofamiliares,
+            no_patologicos: row.antecedentes_personales_no_patologicos,
+            patologicos: row.antecedentes_personales_patologicos,
+            alergias: row.alergias_intolerancias,
+            aversiones: row.aversiones_alimentarias,
             fecha_registro: row.fecha_registro_antecedentes
           });
         }
@@ -4944,10 +4955,11 @@ app.post('/api/clientes-por-nutriologo', async (req, res) => {
       await connection.end();
     }
   } catch (error) {
-    console.error('Error obteniendo clientes:', error);
-    res.status(500).json({ error: 'Error en la base de datos' });
+    console.error("Error obteniendo clientes:", error);
+    res.status(500).json({ error: "Error en la base de datos" });
   }
 });
+
 
 app.post('/api/cliente-detalle', async (req, res) => {
   try {
