@@ -3740,12 +3740,9 @@ app.get('/api/mysql-test', async (req, res) => {
 });
 
 
+// Actualizar tu endpoint de login para manejar ambos formatos
+
 app.post('/api/login', async (req, res) => {
-   console.log('🔐 === LOGIN REQUEST ===');
-  console.log('Origin:', req.headers.origin);
-  console.log('Method:', req.method);
-  console.log('Headers:', req.headers);
-  console.log('Body:', req.body);
   try {
     console.log('=== LOGIN ATTEMPT ===');
     const { correo, password } = req.body;
@@ -3763,7 +3760,7 @@ app.post('/api/login', async (req, res) => {
 
     try {
       // Buscar en administradores
-          const [adminResults] = await connection.execute(
+      const [adminResults] = await connection.execute(
         'SELECT id_admin as id, tipo_usu, nombre_admin as nombre, correo, password FROM administradores WHERE correo = ?',
         [correo]
       );
@@ -3773,9 +3770,9 @@ app.post('/api/login', async (req, res) => {
         userType = 'admin';
       }
 
-      // Buscar en nutriólogos
+      // Buscar en nutriólogos si no se encontró admin
       if (!user) {
-      const [nutResults] = await connection.execute(
+        const [nutResults] = await connection.execute(
           'SELECT id_nut as id, tipo_usu, CONCAT(nombre_nut, " ", app_nut, " ", apm_nut) as nombre, correo, password, cedula_nut, especialidad_nut, telefono_nut, activo, tiene_acceso FROM nutriologos WHERE correo = ?',
           [correo]
         );
@@ -3786,7 +3783,7 @@ app.post('/api/login', async (req, res) => {
         }
       }
 
-      // Buscar en clientes
+      // Buscar en clientes si no se encontró nutriólogo
       if (!user) {
         const [clientResults] = await connection.execute(
           'SELECT id_cli as id, tipo_usu, CONCAT(nombre_cli, " ", app_cli, " ", apm_cli) as nombre, correo_cli as correo, password_cli as password, edad_cli, sexo_cli, peso_cli, estatura_cli, faf_cli, geb_cli, modo, id_nut, tiene_acceso FROM clientes WHERE correo_cli = ?',
@@ -3799,8 +3796,6 @@ app.post('/api/login', async (req, res) => {
         }
       }
 
-      await connection.end();
-
       if (!user) {
         return res.status(401).json({
           success: false,
@@ -3808,14 +3803,59 @@ app.post('/api/login', async (req, res) => {
         });
       }
 
-      if (password !== user.password) {
+      // ✅ VERIFICACIÓN DE CONTRASEÑA MEJORADA
+      let passwordMatch = false;
+      
+      // Verificar si la contraseña está hasheada
+      const isHashedPassword = user.password.startsWith('$2b$') || user.password.startsWith('$2a$');
+      
+      if (isHashedPassword) {
+        // Contraseña hasheada - usar bcrypt.compare
+        console.log('🔐 Verificando contraseña hasheada...');
+        passwordMatch = await bcrypt.compare(password, user.password);
+      } else {
+        // Contraseña en texto plano - comparación directa (temporal)
+        console.log('⚠️ Contraseña sin hashear detectada - comparación directa');
+        passwordMatch = (password === user.password);
+        
+        // OPCIONAL: Hashear automáticamente la contraseña después del login exitoso
+        if (passwordMatch) {
+          console.log('🔐 Hasheando contraseña automáticamente...');
+          try {
+            const hashedPassword = await bcrypt.hash(password, 10);
+            
+            if (userType === 'admin') {
+              await connection.execute(
+                'UPDATE administradores SET password = ? WHERE id_admin = ?',
+                [hashedPassword, user.id]
+              );
+            } else if (userType === 'nutriologo') {
+              await connection.execute(
+                'UPDATE nutriologos SET password = ? WHERE id_nut = ?',
+                [hashedPassword, user.id]
+              );
+            } else if (userType === 'cliente') {
+              await connection.execute(
+                'UPDATE clientes SET password_cli = ? WHERE id_cli = ?',
+                [hashedPassword, user.id]
+              );
+            }
+            
+            console.log(`✅ Contraseña hasheada automáticamente para ${userType} ${user.id}`);
+          } catch (hashError) {
+            console.error('❌ Error hasheando automáticamente:', hashError);
+          }
+        }
+      }
+
+      if (!passwordMatch) {
         return res.status(401).json({
           success: false,
           message: 'Credenciales inválidas'
         });
       }
 
-      // Verificar acceso
+      // Verificar estado del usuario (resto del código sin cambios)
       if (userType === 'nutriologo' && !user.activo) {
         return res.status(401).json({
           success: false,
@@ -3843,12 +3883,8 @@ app.post('/api/login', async (req, res) => {
         }
       });
 
-    } catch (dbError) {
-      console.error('Error de base de datos:', dbError);
-      return res.status(500).json({
-        success: false,
-        message: 'Error en el servidor'
-      });
+    } finally {
+      await connection.end();
     }
 
   } catch (error) {
