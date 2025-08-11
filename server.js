@@ -3007,6 +3007,52 @@ app.post('/api/iot/pedometer/command', async (req, res) => {
   }
 });
 
+app.get('/api/detalle/:id', async (req, res) => {
+ try {
+   const idNut = req.params.id;
+   
+   if (!idNut) {
+     return res.status(400).json({ error: 'Falta id de nutriólogo' });
+   }
+
+   const connection = await mysql.createConnection(dbConfig);
+   
+   try {
+     const [results] = await connection.execute(
+       `SELECT 
+         id_nut,
+         tipo_usu,
+         nombre_nut,
+         app_nut,
+         apm_nut,
+         correo,
+         cedula_nut,
+         especialidad_nut,
+         telefono_nut,
+         fecha_inicio_sub,
+         fecha_fin_sub,
+         token_vinculacion,
+         tiene_acceso,
+         verificado
+       FROM nutriologos
+       WHERE id_nut = ?`,
+       [idNut]
+     );
+
+     if (results.length === 0) {
+       return res.status(404).json({ error: 'Nutriólogo no encontrado' });
+     }
+
+     res.json(results[0]);
+   } finally {
+     await connection.end();
+   }
+ } catch (error) {
+   console.error('Error obteniendo detalle nutriólogo:', error);
+   res.status(500).json({ error: 'Error en base de datos' });
+ }
+});
+
 // AGREGAR este endpoint a tu server.js para debugging MongoDB:
 
 app.get('/api/debug/mongodb/:id_cli', async (req, res) => {
