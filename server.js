@@ -24,56 +24,53 @@ app.use(cors({
       'https://www.integradora1.com',
       'http://localhost:3000',
       'http://localhost:3001',
-      'https://nutweb.onrender.com',
-      'https://svgl135.cloud-mx-ns.net',
-      'http://svgl135.cloud-mx-ns.net',
-      'https://integradora1.com',
+      'https://nutweb.onrender.com'
     ];
     
-    if (allowedOrigins.includes(origin)) {
-      console.log('✅ Origin permitido:', origin);
+   if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-console.log('❌ Origin bloqueado:', origin);
-    return callback(null, true);
+ 
+    console.log('❌ Origin no permitido:', origin);
+    return callback(new Error('No permitido por CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type', 
-    'Authorization'
-    // 'Accept', 
-    // 'Origin', 
-    // 'X-Requested-With',
-    // 'Access-Control-Allow-Origin'
+    'Authorization',
+     'Accept', 
+     'Origin', 
+    'X-Requested-With',
+    'Access-Control-Allow-Origin'
   ],
-  credentials: false,
-  // optionsSuccessStatus: 200
+  credentials: true,
+   optionsSuccessStatus: 200
 }));
 
-// app.options('*', (req, res) => {
-//   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-//   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-//   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-//   res.header('Access-Control-Allow-Credentials', 'true');
-//   res.sendStatus(200);
-// });
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
 
 
 
-// Middleware adicional para headers CORS
-// app.use((req, res, next) => {
-//   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-//   res.header('Access-Control-Allow-Credentials', 'true');
-//   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-//   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-  
-//   // Log para debugging
-//   if (req.method === 'OPTIONS') {
-//     console.log('🔧 Preflight request from:', req.headers.origin);
-//   }
-  
-//   next();
-// });
+//Middleware adicional para headers CORS
+ app.use((req, res, next) => {
+   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+   res.header('Access-Control-Allow-Credentials', 'true');
+   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+ 
+   // Log para debugging
+   if (req.method === 'OPTIONS') {
+     console.log('🔧 Preflight request from:', req.headers.origin);
+   }
+ 
+   next();
+ });
 
 app.use(express.json());
 
