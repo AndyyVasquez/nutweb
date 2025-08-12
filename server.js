@@ -4960,6 +4960,56 @@ app.post("/api/clientes-por-nutriologo", async (req, res) => {
   }
 });
 
+app.post('/api/cliente-detalle', async (req, res) => {
+  try {
+    const { idCliente } = req.body;
+
+    if (!idCliente || isNaN(idCliente)) {
+      return res.status(400).json({ error: 'ID de cliente inválido' });
+    }
+
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      const [clienteResults] = await connection.execute(
+        `SELECT id_cli, tipo_usu, nombre_cli, app_cli, apm_cli, correo_cli, edad_cli, 
+         sexo_cli, peso_cli, estatura_cli, faf_cli, geb_cli, modo, id_nut, 
+         fecha_inicio_pago, fecha_fin_pago, tiene_acceso
+         FROM clientes WHERE id_cli = ?`,
+        [idCliente]
+      );
+
+      if (clienteResults.length === 0) {
+        return res.status(404).json({ error: 'Cliente no encontrado' });
+      }
+
+      const [antecedentesResults] = await connection.execute(
+        `SELECT 
+      id AS id_formulario,
+      motivo, 
+      antecedentes_heredofamiliares, 
+      antecedentes_personales_no_patologicos, 
+      antecedentes_personales_patologicos, 
+      alergias_intolerancias, 
+      aversiones_alimentarias, 
+      fecha_envio AS fecha_registro
+    FROM formularios_nutricion
+    WHERE id_cliente = ?`,
+        [idCliente]
+      );
+
+      const cliente = clienteResults[0];
+      cliente.antecedentes_medicos = antecedentesResults;
+
+      res.json(cliente);
+    } finally {
+      await connection.end();
+    }
+  } catch (error) {
+    console.error('Error obteniendo detalle cliente:', error);
+    res.status(500).json({ error: 'Error al obtener datos del cliente' });
+  }
+}); 
 
 app.post('/api/cliente-detalle', async (req, res) => {
   try {
