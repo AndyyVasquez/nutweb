@@ -5184,12 +5184,15 @@ app.post('/api/cliente/adherencia', async (req, res) => {
     
     try {
       const [results] = await connection.execute(
-        `SELECT DATE(com.fecha) AS dia, 100 AS porcentaje
-         FROM comidas_registradas com
-         INNER JOIN clientes c ON com.id_cli = c.id_cli
-         WHERE com.id_cli = ? AND c.id_nut = ?
-         GROUP BY DATE(com.fecha)
-         ORDER BY dia ASC`,
+        `SELECT 
+          DATE(com.fecha) AS dia,
+          ROUND(SUM(com.calorias_totales) / d.calorias_objetivo * 100, 2) AS porcentaje
+        FROM comidas_registradas com
+        INNER JOIN clientes c ON com.id_cli = c.id_cli
+        INNER JOIN dietas d ON d.id_cli = c.id_cli AND d.activo = 1
+        WHERE com.id_cli = ? AND c.id_nut = ?
+        GROUP BY DATE(com.fecha), d.calorias_objetivo
+        ORDER BY dia ASC`,
         [idCliente, idNutriologo]
       );
 
@@ -5199,9 +5202,9 @@ app.post('/api/cliente/adherencia', async (req, res) => {
     }
   } catch (error) {
     console.error('Error en adherencia cliente:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+    res.status(500).json({ error: error.message });
+  }
+})
 
 // Cumplimiento de horarios
 app.post('/api/cliente/horarios', async (req, res) => {
