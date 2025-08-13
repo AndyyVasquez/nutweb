@@ -428,27 +428,9 @@ app.get('/payment/success', async (req, res) => {
                 </div>
             </div>
             
-            ${subscriptionToken ? `
-            <div class="token-section">
-                <div class="token-title">🎫 Token de Suscripción</div>
-                <div class="token-value" id="tokenValue">${subscriptionToken}</div>
-                <button class="copy-button" onclick="copyToken()">📋 Copiar Token</button>
-                <div style="margin-top: 10px; font-size: 12px; color: #666;">
-                    Usa este token en la app para activar tu suscripción
-                </div>
-            </div>
-            ` : ''}
-            
-            <div class="instructions">
-                <strong>Instrucciones:</strong><br>
-                1. <strong>Copia el token de suscripción</strong> (botón de arriba)<br>
-                2. <strong>Regresa a la app Nutralis</strong><br>
-                3. <strong>Ingresa el token</strong> en la pantalla de verificación<br>
-                4. <strong>¡Disfruta de tu acceso completo!</strong>
-            </div>
             
             <a href="#" class="return-button" onclick="window.close()">
-                Cerrar Ventana
+                Cerrar Ventana, regresa a la app
             </a>
         </div>
         
