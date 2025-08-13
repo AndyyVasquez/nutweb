@@ -707,6 +707,126 @@ async function fetchThingSpeakData(results = 100) {
     throw error;
   }
 }
+
+async function determineUserFromEntry(entry) {
+  try {
+    console.log('🔍 Determinando usuario para entrada de ThingSpeak:', entry.entry_id);
+    
+    // PRIORIDAD 1: Verificar si hay una asignación activa en memoria
+    const assignment = connectedPedometers.get('thingspeak_device');
+    if (assignment && assignment.connection_type === 'thingspeak') {
+      console.log(`👤 Usuario asignado desde memoria: ${assignment.user_id} (${assignment.user_name})`);
+      return assignment.user_id;
+    }
+    
+    // PRIORIDAD 2: Buscar en base de datos el usuario más reciente
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      // Opción A: Usuario que más recientemente registró pasos
+      const [recentStepsUser] = await connection.execute(
+        `SELECT id_cli 
+         FROM actividad_fisica 
+         WHERE tipo_actividad = 'pasos' 
+         ORDER BY last_update DESC 
+         LIMIT 1`
+      );
+      
+      if (recentStepsUser.length > 0) {
+        const userId = recentStepsUser[0].id_cli;
+        console.log(`👤 Usuario encontrado por actividad reciente: ${userId}`);
+        return userId;
+      }
+      
+      // Opción B: Usuario activo más reciente
+      const [activeUser] = await connection.execute(
+        `SELECT id_cli 
+         FROM clientes 
+         WHERE tiene_acceso = 1 
+         ORDER BY id_cli DESC 
+         LIMIT 1`
+      );
+      
+      if (activeUser.length > 0) {
+        const userId = activeUser[0].id_cli;
+        console.log(`👤 Usuario activo encontrado: ${userId}`);
+        return userId;
+      }
+      
+      console.log('⚠️ No se encontró usuario, usando ID por defecto: 3');
+      return 3; // Tu usuario actual como fallback
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error determinando usuario:', error);
+    return 3; // Fallback a tu usuario actual
+  }
+}
+
+
+app.post('/api/iot/pedometer/release-assignment', async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    
+    const assignment = connectedPedometers.get('thingspeak_device');
+    
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: 'No hay podómetro asignado'
+      });
+    }
+    
+    // Verificar que el usuario que libera es el correcto
+    if (user_id && assignment.user_id !== parseInt(user_id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para liberar este podómetro'
+      });
+    }
+    
+    console.log(`✅ Liberando podómetro de usuario: ${assignment.user_name}`);
+    
+    // Remover asignación
+    connectedPedometers.delete('thingspeak_device');
+    
+    res.json({
+      success: true,
+      message: 'Podómetro liberado exitosamente',
+      former_assignment: assignment
+    });
+    
+  } catch (error) {
+    console.error('❌ Error liberando podómetro:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
+function cleanExpiredAssignments() {
+  const now = new Date();
+  const ASSIGNMENT_TIMEOUT = 24 * 60 * 60 * 1000; // 24 horas para ThingSpeak
+  
+  for (const [deviceId, assignment] of connectedPedometers.entries()) {
+    if (assignment.connection_type === 'thingspeak') {
+      const assignedTime = new Date(assignment.assigned_at);
+      if (now - assignedTime > ASSIGNMENT_TIMEOUT) {
+        console.log(`⏰ Liberando podómetro ThingSpeak ${deviceId} por timeout`);
+        connectedPedometers.delete(deviceId);
+      }
+    }
+  }
+}
+
+// Ejecutar limpieza cada hora
+setInterval(cleanExpiredAssignments, 60 * 60 * 1000);
+
+
 async function processThingSpeakEntry(entry, collection) {
   try {
     // Extraer datos de la entrada de ThingSpeak
@@ -734,9 +854,7 @@ async function processThingSpeakEntry(entry, collection) {
       return;
     }
 
-    // Determinar id_cli (usuario) - por defecto será 3 como en tu ejemplo
-    // Puedes modificar esta lógica según tus necesidades
-    const id_cli = 3; // CAMBIAR SEGÚN TU LÓGICA DE USUARIOS
+ const id_cli = await determineUserFromEntry(entry);
 
     // Crear documento para MongoDB
     const documento = {
@@ -3125,6 +3243,284 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
   }
 });
 
+app.post('/api/iot/pedometer/assign-to-user', async (req, res) => {
+  try {
+    const { user_id, user_name, device_id } = req.body;
+    
+    console.log('📱 === ASIGNANDO PODÓMETRO THINGSPEAK A USUARIO ===');
+    console.log('📥 Datos recibidos:', { user_id, user_name, device_id });
+    
+    if (!user_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id es requerido'
+      });
+    }
+    
+    // Verificar que el usuario existe
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      const [userRows] = await connection.execute(
+        'SELECT id_cli, CONCAT(nombre_cli, " ", app_cli) as nombre FROM clientes WHERE id_cli = ?',
+        [user_id]
+      );
+      
+      if (userRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Usuario no encontrado en la base de datos'
+        });
+      }
+      
+      const user = userRows[0];
+      
+      // Verificar si ya hay otro usuario asignado
+      const existingAssignment = connectedPedometers.get('thingspeak_device');
+      if (existingAssignment && existingAssignment.user_id !== parseInt(user_id)) {
+        return res.status(409).json({
+          success: false,
+          message: `El podómetro ya está asignado a ${existingAssignment.user_name}`,
+          current_assignment: existingAssignment
+        });
+      }
+      
+      // Crear nueva asignación
+      const assignment = {
+        user_id: parseInt(user_id),
+        user_name: user.nombre,
+        device_id: device_id || 'thingspeak_esp32',
+        assigned_at: new Date().toISOString(),
+        status: 'active',
+        connection_type: 'thingspeak',
+        device_type: 'ESP32 + ThingSpeak'
+      };
+      
+      // Guardar asignación
+      connectedPedometers.set('thingspeak_device', assignment);
+      
+      console.log(`✅ Podómetro ThingSpeak asignado a usuario ${user_id} (${user.nombre})`);
+      
+      res.json({
+        success: true,
+        message: 'Podómetro ThingSpeak asignado exitosamente',
+        assignment: {
+          user_id: parseInt(user_id),
+          user_name: user.nombre,
+          device_id: assignment.device_id,
+          device_type: assignment.device_type,
+          assigned_at: assignment.assigned_at
+        }
+      });
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error asignando podómetro:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estadísticas',
+      error: error.message
+    });
+  }
+});
+
+
+app.get('/api/iot/pedometer/system-status', async (req, res) => {
+  try {
+    // Verificar estado de ThingSpeak
+    let thingspeakStatus = 'unknown';
+    let lastEntry = null;
+    
+    try {
+      const data = await fetchThingSpeakData(1);
+      if (data && data.length > 0) {
+        thingspeakStatus = 'active';
+        lastEntry = {
+          entry_id: data[0].entry_id,
+          steps: data[0].field1,
+          created_at: data[0].created_at,
+          age_minutes: Math.round((new Date() - new Date(data[0].created_at)) / (1000 * 60))
+        };
+      } else {
+        thingspeakStatus = 'no_data';
+      }
+    } catch (error) {
+      thingspeakStatus = 'error';
+    }
+
+    // Verificar estado de MongoDB
+    let mongoStatus = 'disconnected';
+    let mongoStats = null;
+    
+    if (mongoDB) {
+      try {
+        const collection = mongoDB.collection('actividad_pasos');
+        const totalDocs = await collection.countDocuments();
+        const thingspeakDocs = await collection.countDocuments({ 
+          sincronizado_desde: 'thingspeak' 
+        });
+        
+        mongoStatus = 'connected';
+        mongoStats = {
+          total_documents: totalDocs,
+          thingspeak_documents: thingspeakDocs,
+          sync_percentage: totalDocs > 0 ? ((thingspeakDocs / totalDocs) * 100).toFixed(1) : '0.0'
+        };
+      } catch (error) {
+        mongoStatus = 'error';
+      }
+    }
+
+    // Estado de asignaciones
+    const assignment = connectedPedometers.get('thingspeak_device');
+    
+    res.json({
+      success: true,
+      system_status: {
+        thingspeak: {
+          status: thingspeakStatus,
+          channel_id: THINGSPEAK_CONFIG.CHANNEL_ID,
+          has_read_key: !!THINGSPEAK_CONFIG.READ_API_KEY,
+          last_entry: lastEntry
+        },
+        mongodb: {
+          status: mongoStatus,
+          database: mongoDB ? mongoDB.databaseName : null,
+          stats: mongoStats
+        },
+        assignments: {
+          has_active_assignment: !!assignment,
+          assignment_info: assignment || null,
+          total_assignments: connectedPedometers.size
+        },
+        sync: {
+          auto_sync_enabled: true,
+          interval_minutes: 5,
+          last_check: new Date().toISOString()
+        }
+      },
+      recommendations: generateSystemRecommendations(thingspeakStatus, mongoStatus, assignment)
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo estado del sistema:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estado del sistema',
+      error: error.message
+    });
+  }
+});
+
+function generateSystemRecommendations(thingspeakStatus, mongoStatus, assignment) {
+  const recommendations = [];
+
+  if (thingspeakStatus === 'error') {
+    recommendations.push({
+      type: 'error',
+      message: 'ThingSpeak no responde. Verifica tu Read API Key y conexión.',
+      action: 'check_thingspeak_config'
+    });
+  } else if (thingspeakStatus === 'no_data') {
+    recommendations.push({
+      type: 'warning',
+      message: 'No hay datos recientes en ThingSpeak. Verifica que el ESP32 esté enviando datos.',
+      action: 'check_esp32_connection'
+    });
+  }
+
+  if (mongoStatus === 'disconnected') {
+    recommendations.push({
+      type: 'error',
+      message: 'MongoDB desconectado. Los datos no se pueden almacenar.',
+      action: 'check_mongodb_connection'
+    });
+  }
+
+  if (!assignment) {
+    recommendations.push({
+      type: 'info',
+      message: 'No hay usuario asignado al podómetro. Los datos se asignarán al usuario más reciente.',
+      action: 'assign_user'
+    });
+  }
+
+  if (recommendations.length === 0) {
+    recommendations.push({
+      type: 'success',
+      message: 'Sistema funcionando correctamente. Todos los componentes están operativos.',
+      action: 'none'
+    });
+  }
+
+  return recommendations;
+}
+
+app.post('/api/iot/pedometer/auto-assign', async (req, res) => {
+  try {
+    console.log('🤖 === ASIGNACIÓN AUTOMÁTICA DE USUARIO ===');
+    
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      // Buscar usuario más activo recientemente
+      const [userRows] = await connection.execute(
+        `SELECT c.id_cli, CONCAT(c.nombre_cli, ' ', c.app_cli) as nombre
+         FROM clientes c
+         LEFT JOIN actividad_fisica af ON c.id_cli = af.id_cli AND af.tipo_actividad = 'pasos'
+         WHERE c.tiene_acceso = 1
+         ORDER BY af.last_update DESC, c.id_cli DESC
+         LIMIT 1`
+      );
+      
+      if (userRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No se encontraron usuarios activos'
+        });
+      }
+      
+      const user = userRows[0];
+      
+      // Crear asignación automática
+      const assignment = {
+        user_id: user.id_cli,
+        user_name: user.nombre,
+        device_id: 'thingspeak_esp32_auto',
+        assigned_at: new Date().toISOString(),
+        status: 'active',
+        connection_type: 'thingspeak',
+        device_type: 'ESP32 + ThingSpeak (Auto)',
+        auto_assigned: true
+      };
+      
+      connectedPedometers.set('thingspeak_device', assignment);
+      
+      console.log(`🤖 Auto-asignado a usuario ${user.id_cli} (${user.nombre})`);
+      
+      res.json({
+        success: true,
+        message: 'Usuario asignado automáticamente',
+        assignment: assignment
+      });
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error en asignación automática:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error en asignación automática',
+      error: error.message
+    });
+  }
+});
+
 
 app.post('/api/iot/pedometer/assign', async (req, res) => {
   try {
@@ -3192,6 +3588,179 @@ app.post('/api/iot/pedometer/assign', async (req, res) => {
     });
   }
 });
+
+app.get('/api/iot/pedometer/assigned-user', (req, res) => {
+  try {
+    const assignment = connectedPedometers.get('thingspeak_device');
+    
+    if (assignment && assignment.connection_type === 'thingspeak') {
+      res.json({
+        success: true,
+        assigned: true,
+        user: {
+          user_id: assignment.user_id,
+          user_name: assignment.user_name,
+          device_id: assignment.device_id,
+          device_type: assignment.device_type,
+          assigned_at: assignment.assigned_at
+        }
+      });
+    } else {
+      res.json({
+        success: true,
+        assigned: false,
+        message: 'No hay usuario asignado al podómetro ThingSpeak'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo usuario asignado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo información de asignación'
+    });
+  }
+});
+
+app.post('/api/iot/pedometer/release-assignment', async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    
+    const assignment = connectedPedometers.get('thingspeak_device');
+    
+    if (!assignment) {
+      return res.status(404).json({
+        success: false,
+        message: 'No hay podómetro asignado'
+      });
+    }
+    
+    // Verificar permisos
+    if (user_id && assignment.user_id !== parseInt(user_id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para liberar este podómetro'
+      });
+    }
+    
+    console.log(`✅ Liberando podómetro ThingSpeak de usuario: ${assignment.user_name}`);
+    
+    // Remover asignación
+    connectedPedometers.delete('thingspeak_device');
+    
+    res.json({
+      success: true,
+      message: 'Podómetro liberado exitosamente',
+      former_assignment: assignment
+    });
+    
+  } catch (error) {
+    console.error('❌ Error liberando podómetro:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
+app.get('/api/iot/pedometer/stats/:id_cli', async (req, res) => {
+  try {
+    const { id_cli } = req.params;
+    const { days = 7 } = req.query;
+
+    if (!mongoDB) {
+      return res.status(500).json({
+        success: false,
+        message: 'MongoDB no está disponible'
+      });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+
+    // Calcular rango de fechas
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - parseInt(days));
+
+    const startDateStr = startDate.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+
+    // Pipeline de agregación para estadísticas
+    const pipeline = [
+      {
+        $match: {
+          id_cli: parseInt(id_cli),
+          fecha: {
+            $gte: startDateStr,
+            $lte: endDateStr
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total_pasos: { $sum: "$pasos" },
+          total_calorias: { $sum: "$calorias_gastadas" },
+          total_distancia: { $sum: "$distancia_km" },
+          dias_activos: { $sum: 1 },
+          promedio_pasos: { $avg: "$pasos" },
+          max_pasos: { $max: "$pasos" },
+          min_pasos: { $min: "$pasos" }
+        }
+      }
+    ];
+
+    const [stats] = await collection.aggregate(pipeline).toArray();
+
+    // Datos diarios para gráfico
+    const dailyData = await collection
+      .find({
+        id_cli: parseInt(id_cli),
+        fecha: { $gte: startDateStr, $lte: endDateStr }
+      })
+      .sort({ fecha: 1 })
+      .toArray();
+
+    // Verificar asignación
+    const assignment = connectedPedometers.get('thingspeak_device');
+    const isAssigned = assignment && assignment.user_id === parseInt(id_cli);
+
+    res.json({
+      success: true,
+      user_id: parseInt(id_cli),
+      period_days: parseInt(days),
+      date_range: { start: startDateStr, end: endDateStr },
+      is_assigned_to_pedometer: isAssigned,
+      assignment_info: isAssigned ? assignment : null,
+      summary: stats || {
+        total_pasos: 0,
+        total_calorias: 0,
+        total_distancia: 0,
+        dias_activos: 0,
+        promedio_pasos: 0,
+        max_pasos: 0,
+        min_pasos: 0
+      },
+      daily_data: dailyData,
+      thingspeak_info: {
+        source: 'thingspeak',
+        channel_id: THINGSPEAK_CONFIG.CHANNEL_ID,
+        sync_enabled: true,
+        last_check: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estadísticas',
+      error: error.message
+    });
+  }
+});
+
+
 
 // POST /api/iot/pedometer/release - VERSIÓN CORREGIDA
 app.post('/api/iot/pedometer/release', async (req, res) => {
@@ -4033,6 +4602,100 @@ app.post('/api/iot/scale/tare-complete', (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error procesando tara',
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/iot/pedometer/stats/:id_cli', async (req, res) => {
+  try {
+    const { id_cli } = req.params;
+    const { days = 7 } = req.query;
+
+    if (!mongoDB) {
+      return res.status(500).json({
+        success: false,
+        message: 'MongoDB no está disponible'
+      });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+
+    // Obtener estadísticas de los últimos N días
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - parseInt(days));
+
+    const pipeline = [
+      {
+        $match: {
+          id_cli: parseInt(id_cli),
+          fecha: {
+            $gte: startDate.toISOString().split('T')[0],
+            $lte: endDate.toISOString().split('T')[0]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total_pasos: { $sum: "$pasos" },
+          total_calorias: { $sum: "$calorias_gastadas" },
+          total_distancia: { $sum: "$distancia_km" },
+          dias_activos: { $sum: 1 },
+          promedio_pasos: { $avg: "$pasos" },
+          max_pasos: { $max: "$pasos" },
+          min_pasos: { $min: "$pasos" }
+        }
+      }
+    ];
+
+    const [stats] = await collection.aggregate(pipeline).toArray();
+
+    // Obtener datos diarios para el gráfico
+    const dailyData = await collection
+      .find({
+        id_cli: parseInt(id_cli),
+        fecha: {
+          $gte: startDate.toISOString().split('T')[0],
+          $lte: endDate.toISOString().split('T')[0]
+        }
+      })
+      .sort({ fecha: 1 })
+      .toArray();
+
+    // Verificar si hay asignación activa
+    const assignment = connectedPedometers.get('thingspeak_device');
+    const isAssigned = assignment && assignment.user_id === parseInt(id_cli);
+
+    res.json({
+      success: true,
+      user_id: parseInt(id_cli),
+      period_days: parseInt(days),
+      is_assigned_to_pedometer: isAssigned,
+      assignment_info: isAssigned ? assignment : null,
+      summary: stats || {
+        total_pasos: 0,
+        total_calorias: 0,
+        total_distancia: 0,
+        dias_activos: 0,
+        promedio_pasos: 0,
+        max_pasos: 0,
+        min_pasos: 0
+      },
+      daily_data: dailyData,
+      thingspeak_sync: {
+        source: 'thingspeak',
+        channel_id: THINGSPEAK_CONFIG.CHANNEL_ID,
+        last_sync: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas de pasos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estadísticas',
       error: error.message
     });
   }
