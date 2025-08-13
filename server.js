@@ -4326,7 +4326,6 @@ app.post('/api/nutriologos/login', async (req, res) => {
           userType = 'admin';
           // Los admins no tienen verificado ni tiene_acceso
           user.verificado = 'aprobado';
-          user.tiene_acceso = 1;
           user.activo = 1;
         }
       }
@@ -4374,13 +4373,7 @@ app.post('/api/nutriologos/login', async (req, res) => {
           });
         }
 
-        if (!user.tiene_acceso) {
-          console.log('❌ Sin acceso');
-          return res.status(403).json({
-            success: false,
-            error: 'No tienes acceso en este momento'
-          });
-        }
+        
       }
 
       // ✅ VERIFICACIÓN DE CONTRASEÑA
