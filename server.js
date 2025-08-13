@@ -115,6 +115,7 @@ let connectedScales = new Map();
 const payment = new Payment(mercadopago);
 const preference = new Preference(mercadopago);
 
+
 app.post('/api/mercadopago/create-preference', async (req, res) => {
   try {
     const { 
@@ -608,6 +609,363 @@ const generateSubscriptionToken = (userId, planType, paymentId) => {
   const planPrefix = planType === 'cliente' ? 'CLI' : 'NUT';
   
   return `SUB${planPrefix}${userId}${timestamp}${random}`;
+};
+
+//ThinkSpeak - Mongodb
+
+const THINGSPEAK_CONFIG = {
+  CHANNEL_ID: '3033451', 
+  READ_API_KEY: 'ZUHPMQJMX3YE5BP7', 
+  BASE_URL: 'https://api.thingspeak.com/channels'
+};
+
+async function syncThingSpeakToMongoDB() {
+  try {
+    console.log('🔄 === INICIANDO SINCRONIZACIÓN THINGSPEAK -> MONGODB ===');
+    
+    if (!mongoDB) {
+      throw new Error('MongoDB no está conectado');
+    }
+
+    // 1. Obtener datos de ThingSpeak
+    const thingSpeakData = await fetchThingSpeakData();
+    
+    if (!thingSpeakData || thingSpeakData.length === 0) {
+      console.log('📊 No hay datos nuevos en ThingSpeak');
+      return { success: true, message: 'No hay datos nuevos', processed: 0 };
+    }
+
+    console.log(`📥 Obtenidos ${thingSpeakData.length} registros de ThingSpeak`);
+
+    // 2. Procesar y guardar cada registro en MongoDB
+    const collection = mongoDB.collection('actividad_pasos');
+    let processedCount = 0;
+    let errorsCount = 0;
+
+    for (const entry of thingSpeakData) {
+      try {
+        await processThingSpeakEntry(entry, collection);
+        processedCount++;
+      } catch (error) {
+        console.error(`❌ Error procesando entrada:`, error);
+        errorsCount++;
+      }
+    }
+
+    console.log(`✅ Sincronización completada: ${processedCount} procesados, ${errorsCount} errores`);
+    
+    return {
+      success: true,
+      message: 'Sincronización completada',
+      processed: processedCount,
+      errors: errorsCount,
+      total: thingSpeakData.length
+    };
+
+  } catch (error) {
+    console.error('❌ Error en sincronización ThingSpeak:', error);
+    throw error;
+  }
+}
+
+async function fetchThingSpeakData(results = 100) {
+  try {
+    const url = `${THINGSPEAK_CONFIG.BASE_URL}/${THINGSPEAK_CONFIG.CHANNEL_ID}/feeds.json`;
+    
+    const params = {
+      api_key: THINGSPEAK_CONFIG.READ_API_KEY,
+      results: results, // Número de registros a obtener
+      timezone: 'America/Mexico_City' // Ajusta según tu zona horaria
+    };
+
+    console.log('📡 Consultando ThingSpeak:', url);
+    
+    const response = await axios.get(url, { params });
+    
+    if (response.status !== 200) {
+      throw new Error(`Error HTTP: ${response.status}`);
+    }
+
+    const data = response.data;
+    
+    if (!data.feeds || !Array.isArray(data.feeds)) {
+      console.log('⚠️ No se encontraron feeds en ThingSpeak');
+      return [];
+    }
+
+    console.log(`📊 Canal: ${data.channel.name}, Feeds: ${data.feeds.length}`);
+    
+    return data.feeds;
+
+  } catch (error) {
+    console.error('❌ Error obteniendo datos de ThingSpeak:', error);
+    
+    if (error.response) {
+      console.error('📡 Respuesta de error:', error.response.status, error.response.data);
+    }
+    
+    throw error;
+  }
+}
+async function processThingSpeakEntry(entry, collection) {
+  try {
+    // Extraer datos de la entrada de ThingSpeak
+    const pasos = parseInt(entry.field1) || 0; // field1 contiene los pasos
+    const created_at = new Date(entry.created_at);
+    const entry_id = parseInt(entry.entry_id);
+    
+    // Extraer fecha y hora
+    const fecha = created_at.toISOString().split('T')[0]; // YYYY-MM-DD
+    const hora = created_at.toTimeString().split(' ')[0].slice(0, 5); // HH:MM
+
+    // Calcular métricas
+    const calorias_gastadas = Math.round(pasos * 0.04); // Estimación: 0.04 cal/paso
+    const distancia_km = +(pasos * 0.75 / 1000).toFixed(2); // Estimación: 75cm/paso
+
+    console.log(`📊 Procesando: ${pasos} pasos del ${fecha} ${hora}`);
+
+    // Verificar si ya existe este registro en MongoDB
+    const existingDoc = await collection.findOne({
+      entry_id_thingspeak: entry_id
+    });
+
+    if (existingDoc) {
+      console.log(`⚠️ Registro ya existe (entry_id: ${entry_id}), omitiendo...`);
+      return;
+    }
+
+    // Determinar id_cli (usuario) - por defecto será 3 como en tu ejemplo
+    // Puedes modificar esta lógica según tus necesidades
+    const id_cli = 3; // CAMBIAR SEGÚN TU LÓGICA DE USUARIOS
+
+    // Crear documento para MongoDB
+    const documento = {
+      id_cli: id_cli,
+      fecha: fecha,
+      pasos: pasos,
+      calorias_gastadas: calorias_gastadas,
+      distancia_km: distancia_km,
+      hora_ultima_actualizacion: hora,
+      dispositivo: 'ESP32_ThingSpeak',
+      estado: 'activo',
+      timestamp: created_at,
+      // Campos específicos de ThingSpeak
+      entry_id_thingspeak: entry_id,
+      created_at_thingspeak: entry.created_at,
+      sincronizado_desde: 'thingspeak',
+      sincronizado_en: new Date()
+    };
+
+    // Verificar si ya existe un registro para este usuario y fecha
+    const existingDateDoc = await collection.findOne({
+      id_cli: id_cli,
+      fecha: fecha
+    });
+
+    if (existingDateDoc) {
+      // Actualizar registro existente con los datos más recientes
+      await collection.updateOne(
+        { _id: existingDateDoc._id },
+        { 
+          $set: {
+            pasos: pasos,
+            calorias_gastadas: calorias_gastadas,
+            distancia_km: distancia_km,
+            hora_ultima_actualizacion: hora,
+            timestamp: created_at,
+            entry_id_thingspeak: entry_id,
+            sincronizado_en: new Date()
+          }
+        }
+      );
+      
+      console.log(`🔄 Actualizado registro existente para ${fecha}`);
+    } else {
+      // Crear nuevo registro
+      const result = await collection.insertOne(documento);
+      console.log(`✅ Nuevo registro creado: ${result.insertedId}`);
+    }
+
+  } catch (error) {
+    console.error('❌ Error procesando entrada de ThingSpeak:', error);
+    throw error;
+  }
+}
+
+app.post('/api/sync/thingspeak', async (req, res) => {
+  try {
+    console.log('🔄 === SINCRONIZACIÓN MANUAL ACTIVADA ===');
+    
+    const { results = 50, user_id } = req.body;
+
+    // Validar que MongoDB esté conectado
+    if (!mongoDB) {
+      return res.status(500).json({
+        success: false,
+        message: 'MongoDB no está conectado'
+      });
+    }
+
+    // Ejecutar sincronización
+    const syncResult = await syncThingSpeakToMongoDB();
+
+    res.json({
+      success: true,
+      message: 'Sincronización ejecutada exitosamente',
+      ...syncResult,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Error en sincronización manual:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error ejecutando sincronización',
+      error: error.message
+    });
+  }
+});
+
+app.get('/api/thingspeak/latest/:results?', async (req, res) => {
+  try {
+    const results = parseInt(req.params.results) || 10;
+    
+    console.log(`📡 Obteniendo últimos ${results} registros de ThingSpeak`);
+    
+    const data = await fetchThingSpeakData(results);
+    
+    res.json({
+      success: true,
+      total_records: data.length,
+      data: data.map(entry => ({
+        entry_id: entry.entry_id,
+        pasos: entry.field1,
+        created_at: entry.created_at,
+        fecha: new Date(entry.created_at).toISOString().split('T')[0],
+        hora: new Date(entry.created_at).toTimeString().split(' ')[0]
+      }))
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo datos de ThingSpeak:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo datos de ThingSpeak',
+      error: error.message
+    });
+  }
+});
+function startAutoSync() {
+  console.log('⏰ Iniciando sincronización automática cada 5 minutos');
+  
+  // Ejecutar inmediatamente una vez
+  setTimeout(async () => {
+    try {
+      console.log('🔄 Primera sincronización automática...');
+      await syncThingSpeakToMongoDB();
+    } catch (error) {
+      console.error('❌ Error en primera sincronización:', error);
+    }
+  }, 10000); // Esperar 10 segundos después del inicio
+
+  // Configurar intervalo de 5 minutos
+  setInterval(async () => {
+    try {
+      console.log('⏰ Ejecutando sincronización automática...');
+      await syncThingSpeakToMongoDB();
+    } catch (error) {
+      console.error('❌ Error en sincronización automática:', error);
+    }
+  }, 5 * 60 * 1000); // 5 minutos
+}
+
+// =============================================================================
+// ENDPOINT PARA VERIFICAR CONFIGURACIÓN DE THINGSPEAK
+// =============================================================================
+
+app.get('/api/thingspeak/config', (req, res) => {
+  res.json({
+    success: true,
+    config: {
+      channel_id: THINGSPEAK_CONFIG.CHANNEL_ID,
+      has_read_key: !!THINGSPEAK_CONFIG.READ_API_KEY,
+      base_url: THINGSPEAK_CONFIG.BASE_URL,
+      mongodb_connected: !!mongoDB,
+      mongodb_database: mongoDB ? mongoDB.databaseName : null
+    }
+  });
+});
+
+// =============================================================================
+// ENDPOINT PARA ESTADÍSTICAS DE SINCRONIZACIÓN
+// =============================================================================
+
+app.get('/api/sync/stats', async (req, res) => {
+  try {
+    if (!mongoDB) {
+      return res.status(500).json({
+        success: false,
+        message: 'MongoDB no conectado'
+      });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+
+    // Contar documentos sincronizados desde ThingSpeak
+    const thingspeakDocs = await collection.countDocuments({
+      sincronizado_desde: 'thingspeak'
+    });
+
+    // Obtener último registro sincronizado
+    const lastSync = await collection.findOne(
+      { sincronizado_desde: 'thingspeak' },
+      { sort: { sincronizado_en: -1 } }
+    );
+
+    // Contar total de documentos
+    const totalDocs = await collection.countDocuments();
+
+    res.json({
+      success: true,
+      stats: {
+        total_documents: totalDocs,
+        thingspeak_documents: thingspeakDocs,
+        last_sync: lastSync ? {
+          fecha: lastSync.fecha,
+          pasos: lastSync.pasos,
+          sincronizado_en: lastSync.sincronizado_en,
+          entry_id: lastSync.entry_id_thingspeak
+        } : null,
+        sync_percentage: totalDocs > 0 ? ((thingspeakDocs / totalDocs) * 100).toFixed(1) : '0.0'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estadísticas',
+      error: error.message
+    });
+  }
+});
+
+// INICIAR SINCRONIZACIÓN AUTOMÁTICA AL ARRANCAR EL SERVIDOR
+// Agregar esto después de que MongoDB se conecte
+setTimeout(() => {
+  if (mongoDB) {
+    console.log('🚀 MongoDB conectado, iniciando auto-sincronización con ThingSpeak');
+    startAutoSync();
+  } else {
+    console.log('⚠️ MongoDB no conectado, sincronización automática deshabilitada');
+  }
+}, 15000); // Esperar 15 segundos para asegurar que MongoDB esté conectado
+
+// Exportar funciones para uso en otros módulos
+module.exports = {
+  syncThingSpeakToMongoDB,
+  fetchThingSpeakData,
+  startAutoSync
 };
 
 // POST para obtener la dieta actual del cliente
