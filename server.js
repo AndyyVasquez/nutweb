@@ -941,20 +941,22 @@ async function processThingSpeakEntry(entry, collection) {
   try {
     // Extraer datos de la entrada de ThingSpeak
     const pasos = parseInt(entry.field1) || 0; // field1 contiene los pasos
+    const userId = parseInt(entry.field2) || null; // field2 contiene el user_id
     const created_at = new Date(entry.created_at);
     const entry_id = parseInt(entry.entry_id);
     
-    // Extraer fecha y hora
-    const fecha = created_at.toISOString().split('T')[0]; // YYYY-MM-DD
-    const hora = created_at.toTimeString().split(' ')[0].slice(0, 5); // HH:MM
+    // Si no hay user_id en field2, usar determinación automática
+    const id_cli = userId || await determineUserFromEntry(entry);
+    
+    console.log(`📊 Procesando: ${pasos} pasos del usuario ${id_cli} (${created_at.toISOString()})`);
 
-    // Calcular métricas
-    const calorias_gastadas = Math.round(pasos * 0.04); // Estimación: 0.04 cal/paso
-    const distancia_km = +(pasos * 0.75 / 1000).toFixed(2); // Estimación: 75cm/paso
+    // Resto de tu lógica existente...
+    const fecha = created_at.toISOString().split('T')[0];
+    const hora = created_at.toTimeString().split(' ')[0].slice(0, 5);
+    const calorias_gastadas = Math.round(pasos * 0.04);
+    const distancia_km = +(pasos * 0.75 / 1000).toFixed(2);
 
-    console.log(`📊 Procesando: ${pasos} pasos del ${fecha} ${hora}`);
-
-    // Verificar si ya existe este registro en MongoDB
+    // Verificar si ya existe este registro
     const existingDoc = await collection.findOne({
       entry_id_thingspeak: entry_id
     });
@@ -964,9 +966,12 @@ async function processThingSpeakEntry(entry, collection) {
       return;
     }
 
- const id_cli = await determineUserFromEntry(entry);
+    // Buscar registro existente para este usuario y fecha
+    const existingDateDoc = await collection.findOne({
+      id_cli: id_cli,
+      fecha: fecha
+    });
 
-    // Crear documento para MongoDB
     const documento = {
       id_cli: id_cli,
       fecha: fecha,
@@ -974,51 +979,226 @@ async function processThingSpeakEntry(entry, collection) {
       calorias_gastadas: calorias_gastadas,
       distancia_km: distancia_km,
       hora_ultima_actualizacion: hora,
-      dispositivo: 'ESP32_ThingSpeak',
+      dispositivo: 'ESP32_ThingSpeak_Enhanced',
       estado: 'activo',
       timestamp: created_at,
-      // Campos específicos de ThingSpeak
       entry_id_thingspeak: entry_id,
       created_at_thingspeak: entry.created_at,
-      sincronizado_desde: 'thingspeak',
-      sincronizado_en: new Date()
+      sincronizado_desde: 'thingspeak_with_user',
+      sincronizado_en: new Date(),
+      user_id_from_device: userId // Indicar si vino del dispositivo
     };
 
-    // Verificar si ya existe un registro para este usuario y fecha
-    const existingDateDoc = await collection.findOne({
-      id_cli: id_cli,
+    if (existingDateDoc) {
+      // Solo actualizar si los pasos son mayores (evitar retrocesos)
+      if (pasos >= existingDateDoc.pasos) {
+        await collection.updateOne(
+          { _id: existingDateDoc._id },
+          { $set: documento }
+        );
+        console.log(`🔄 Actualizado registro existente: ${pasos} pasos`);
+      } else {
+         console.log(`⚠️ Pasos menores que existente (${pasos} < ${existingDateDoc.pasos}), no actualizando`);
+     }
+   } else {
+     // Crear nuevo registro
+     const result = await collection.insertOne(documento);
+     console.log(`✅ Nuevo registro creado: ${result.insertedId}`);
+   }
+
+ } catch (error) {
+   console.error('❌ Error procesando entrada de ThingSpeak:', error);
+   throw error;
+ }
+}
+
+app.post('/api/iot/pedometer/sync-user-steps', async (req, res) => {
+  try {
+    const { 
+      user_id, 
+      device_steps, 
+      fecha, 
+      device_id = 'thingspeak_esp32',
+      force_sync = false 
+    } = req.body;
+    
+    console.log('🔄 === SINCRONIZACIÓN DE PASOS POR USUARIO ===');
+    console.log('📥 Datos recibidos:', { user_id, device_steps, fecha, force_sync });
+    
+    if (!user_id || device_steps === undefined || !fecha) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id, device_steps y fecha son requeridos'
+      });
+    }
+
+    // Verificar que el usuario está asignado
+    const assignment = connectedPedometers.get('thingspeak_device');
+    if (!assignment || assignment.user_id !== parseInt(user_id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Usuario no asignado al podómetro'
+      });
+    }
+
+    if (!mongoDB) {
+      return res.status(500).json({
+        success: false,
+        message: 'MongoDB no disponible'
+      });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+    
+    // Buscar registro existente para este usuario y fecha
+    const existingDoc = await collection.findOne({
+      id_cli: parseInt(user_id),
       fecha: fecha
     });
 
-    if (existingDateDoc) {
-      // Actualizar registro existente con los datos más recientes
-      await collection.updateOne(
-        { _id: existingDateDoc._id },
-        { 
-          $set: {
-            pasos: pasos,
-            calorias_gastadas: calorias_gastadas,
-            distancia_km: distancia_km,
-            hora_ultima_actualizacion: hora,
-            timestamp: created_at,
-            entry_id_thingspeak: entry_id,
-            sincronizado_en: new Date()
-          }
-        }
-      );
+    const deviceStepsInt = parseInt(device_steps);
+    let finalSteps = deviceStepsInt;
+    let action = 'created';
+
+    if (existingDoc) {
+      const serverSteps = existingDoc.pasos || 0;
       
-      console.log(`🔄 Actualizado registro existente para ${fecha}`);
-    } else {
-      // Crear nuevo registro
-      const result = await collection.insertOne(documento);
-      console.log(`✅ Nuevo registro creado: ${result.insertedId}`);
+      if (force_sync) {
+        // Forzar sincronización: usar los pasos del dispositivo
+        finalSteps = deviceStepsInt;
+        action = 'forced_sync';
+      } else {
+        // Sincronización inteligente: usar el mayor
+        finalSteps = Math.max(serverSteps, deviceStepsInt);
+        action = serverSteps > deviceStepsInt ? 'server_higher' : 
+                 deviceStepsInt > serverSteps ? 'device_higher' : 'equal';
+      }
     }
 
+    // Calcular métricas
+    const caloriasGastadas = Math.round(finalSteps * 0.04);
+    const distanciaKm = +(finalSteps * 0.75 / 1000).toFixed(2);
+    const horaActual = new Date().toTimeString().split(' ')[0].slice(0, 5);
+
+    const documentoActualizado = {
+      id_cli: parseInt(user_id),
+      fecha: fecha,
+      pasos: finalSteps,
+      calorias_gastadas: caloriasGastadas,
+      distancia_km: distanciaKm,
+      hora_ultima_actualizacion: horaActual,
+      dispositivo: 'ESP32_ThingSpeak_Sync',
+      estado: 'activo',
+      timestamp: new Date(),
+      sincronizado_desde: 'device_sync',
+      device_steps: deviceStepsInt,
+      server_steps: existingDoc ? existingDoc.pasos : 0,
+      sync_action: action
+    };
+
+    if (existingDoc) {
+      await collection.updateOne(
+        { _id: existingDoc._id },
+        { $set: documentoActualizado }
+      );
+    } else {
+      await collection.insertOne(documentoActualizado);
+    }
+
+    console.log(`✅ Sincronización completada: ${action}, pasos finales: ${finalSteps}`);
+
+    res.json({
+      success: true,
+      message: 'Sincronización completada',
+      sync_result: {
+        user_id: parseInt(user_id),
+        fecha: fecha,
+        device_steps: deviceStepsInt,
+        server_steps: existingDoc ? existingDoc.pasos : 0,
+        final_steps: finalSteps,
+        action: action,
+        calories: caloriasGastadas,
+        distance_km: distanciaKm
+      }
+    });
+
   } catch (error) {
-    console.error('❌ Error procesando entrada de ThingSpeak:', error);
-    throw error;
+    console.error('❌ Error en sincronización de pasos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
   }
-}
+});
+
+//reset pasoss nuevo usuario
+app.post('/api/iot/pedometer/reset-user-steps', async (req, res) => {
+  try {
+    const { user_id, fecha, reason = 'manual_reset' } = req.body;
+    
+    console.log('🔄 === RESET DE PASOS POR USUARIO ===');
+    console.log('📥 Datos:', { user_id, fecha, reason });
+    
+    if (!user_id || !fecha) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id y fecha son requeridos'
+      });
+    }
+
+    if (!mongoDB) {
+      return res.status(500).json({
+        success: false,
+        message: 'MongoDB no disponible'
+      });
+    }
+
+    const collection = mongoDB.collection('actividad_pasos');
+    
+    const documentoReset = {
+      id_cli: parseInt(user_id),
+      fecha: fecha,
+      pasos: 0,
+      calorias_gastadas: 0,
+      distancia_km: 0,
+      hora_ultima_actualizacion: new Date().toTimeString().split(' ')[0].slice(0, 5),
+      dispositivo: 'ESP32_Reset',
+      estado: 'reset',
+      timestamp: new Date(),
+      reset_reason: reason
+    };
+
+    await collection.updateOne(
+      { 
+        id_cli: parseInt(user_id),
+        fecha: fecha 
+      },
+      { $set: documentoReset },
+      { upsert: true }
+    );
+
+    console.log(`✅ Pasos reseteados para usuario ${user_id} en fecha ${fecha}`);
+
+    res.json({
+      success: true,
+      message: 'Pasos reseteados exitosamente',
+      reset_data: {
+        user_id: parseInt(user_id),
+        fecha: fecha,
+        reason: reason
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error reseteando pasos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor',
+      error: error.message
+    });
+  }
+});
 
 app.post('/api/sync/thingspeak', async (req, res) => {
   try {
