@@ -3127,54 +3127,53 @@ app.post('/api/iot/pedometer/command', (req, res) => {
 });
 
 // GET /api/iot/pedometer/steps/:id_cli - Obtener pasos del usuario desde BD
-app.get('/api/iot/pedometer/steps/:id_cli', async (req, res) => {
+app.get('/api/iot/pedometer/steps/:user_id', async (req, res) => {
   try {
-    const { id_cli } = req.params;
+    const { user_id } = req.params;
     const { fecha } = req.query;
     const targetDate = fecha || new Date().toISOString().split('T')[0];
-
-    console.log('👟 Obteniendo pasos para usuario:', id_cli, 'fecha:', targetDate);
-
-    const query = `
-      SELECT 
-        pasos_totales,
-        calorias_quemadas,
-        hora_actualizacion,
-        last_update
-      FROM actividad_fisica 
-      WHERE id_cli = ? AND fecha = ? AND tipo_actividad = 'pasos'
-      ORDER BY last_update DESC
-      LIMIT 1
-    `;
-
-    const [rows] = await pool.execute(query, [id_cli, targetDate]);
-
-    if (rows.length > 0) {
-      const data = rows[0];
-      res.json({
-        success: true,
-        steps: data.pasos_totales || 0,
-        caloriesBurned: data.calorias_quemadas || 0,
-        lastUpdate: data.last_update,
-        date: targetDate,
-        goalProgress: ((data.pasos_totales / 10000) * 100).toFixed(1)
-      });
-    } else {
-      res.json({
-        success: true,
-        steps: 0,
-        caloriesBurned: 0,
-        lastUpdate: null,
-        date: targetDate,
-        goalProgress: '0.0'
+    
+    console.log(`📊 ESP32 consultando pasos para usuario ${user_id}, fecha: ${targetDate}`);
+    
+    if (!mongoDB) {
+      return res.json({
+        pasos: 0,
+        fecha: targetDate,
+        error: 'MongoDB no disponible'
       });
     }
-
+    
+    const collection = mongoDB.collection('actividad_pasos');
+    
+    const documento = await collection.findOne({
+      id_cli: parseInt(user_id),
+      fecha: targetDate
+    });
+    
+    if (documento) {
+      console.log(`✅ Pasos encontrados: ${documento.pasos}`);
+      res.json({
+        pasos: documento.pasos,
+        fecha: documento.fecha,
+        hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
+        calorias_gastadas: documento.calorias_gastadas,
+        distancia_km: documento.distancia_km
+      });
+    } else {
+      console.log(`❌ No se encontraron pasos para usuario ${user_id} en fecha ${targetDate}`);
+      res.json({
+        pasos: 0,
+        fecha: targetDate,
+        hora_ultima_actualizacion: null,
+        calorias_gastadas: 0,
+        distancia_km: 0
+      });
+    }
+    
   } catch (error) {
-    console.error('❌ Error obteniendo pasos:', error);
+    console.error('❌ Error obteniendo pasos para ESP32:', error);
     res.status(500).json({
-      success: false,
-      message: 'Error obteniendo datos de pasos',
+      pasos: 0,
       error: error.message
     });
   }
@@ -3840,33 +3839,48 @@ app.post('/api/iot/pedometer/assign', async (req, res) => {
 
 app.get('/api/iot/pedometer/assigned-user', (req, res) => {
   try {
-    const assignment = connectedPedometers.get('thingspeak_device');
+    console.log('🔍 ESP32 consultando usuario asignado...');
     
-    if (assignment && assignment.connection_type === 'thingspeak') {
+    // Buscar asignación activa (puede ser cualquier dispositivo)
+    let assignment = null;
+    
+    // Primero buscar en asignaciones ThingSpeak
+    const thingspeakAssignment = connectedPedometers.get('thingspeak_device');
+    if (thingspeakAssignment && thingspeakAssignment.connection_type === 'thingspeak') {
+      assignment = thingspeakAssignment;
+    }
+    
+    // Si no hay asignación ThingSpeak, buscar otras asignaciones
+    if (!assignment && connectedPedometers.size > 0) {
+      // Tomar la primera asignación disponible
+      assignment = Array.from(connectedPedometers.values())[0];
+    }
+    
+    if (assignment) {
+      console.log(`✅ Usuario asignado encontrado: ${assignment.user_id} (${assignment.user_name})`);
       res.json({
-        success: true,
         assigned: true,
-        user: {
-          user_id: assignment.user_id,
-          user_name: assignment.user_name,
-          device_id: assignment.device_id,
-          device_type: assignment.device_type,
-          assigned_at: assignment.assigned_at
-        }
+        user_id: assignment.user_id,
+        user_name: assignment.user_name,
+        device_id: assignment.device_id || 'esp32_default',
+        assigned_at: assignment.assigned_at,
+        connection_type: assignment.connection_type || 'esp32_direct'
       });
     } else {
+      console.log('❌ No hay usuario asignado');
       res.json({
-        success: true,
         assigned: false,
-        message: 'No hay usuario asignado al podómetro ThingSpeak'
+        user_id: null,
+        user_name: null,
+        message: 'No hay usuario asignado al podómetro'
       });
     }
     
   } catch (error) {
-    console.error('❌ Error obteniendo usuario asignado:', error);
+    console.error('❌ Error obteniendo usuario asignado para ESP32:', error);
     res.status(500).json({
-      success: false,
-      message: 'Error obteniendo información de asignación'
+      assigned: false,
+      error: 'Error interno del servidor'
     });
   }
 });
