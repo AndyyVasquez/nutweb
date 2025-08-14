@@ -196,8 +196,7 @@ back_urls: {
   }
 });
 
-// Agregar estas rutas a tu servidor en nutweb.onrender.com
-
+// REEMPLAZAR tu ruta /payment/success con esta versión simplificada:
 app.get('/payment/success', async (req, res) => {
   try {
     const {
@@ -227,9 +226,7 @@ app.get('/payment/success', async (req, res) => {
 
     const { user_id, plan_type } = referenceData;
 
-    let subscriptionToken = null;
-
-    // Actualizar base de datos y generar token si tenemos user_id
+    // Actualizar base de datos si tenemos user_id
     if (user_id && status === 'approved') {
       try {
         const connection = await mysql.createConnection(dbConfig);
@@ -243,13 +240,7 @@ app.get('/payment/success', async (req, res) => {
         
         await connection.execute(updateQuery, [user_id]);
         
-        // Generar token de suscripción
-        subscriptionToken = generateSubscriptionToken(user_id, plan_type, payment_id);
-        
-        // Guardar token en BD
-        await saveSubscriptionToken(user_id, subscriptionToken, payment_id, plan_type);
-        
-        // Registrar el pago si tienes la tabla
+        // Registrar el pago
         try {
           await connection.execute(
             `INSERT INTO pagos_registrados 
@@ -264,13 +255,12 @@ app.get('/payment/success', async (req, res) => {
         await connection.end();
         
         console.log(`✅ Acceso activado para usuario ${user_id}`);
-        console.log(`🎫 Token generado: ${subscriptionToken}`);
       } catch (dbError) {
         console.error('❌ Error actualizando BD:', dbError);
       }
     }
 
-    // Página HTML de éxito CON TOKEN
+    // Página HTML de éxito SIN TOKEN
     const successHTML = `
     <!DOCTYPE html>
     <html lang="es">
@@ -335,45 +325,6 @@ app.get('/payment/success', async (req, res) => {
             .detail-value {
                 color: #666;
             }
-            .token-section {
-                background: #e8f5e8;
-                border: 2px solid #7A9B57;
-                border-radius: 10px;
-                padding: 20px;
-                margin-bottom: 30px;
-                text-align: center;
-            }
-            .token-title {
-                color: #7A9B57;
-                font-size: 18px;
-                font-weight: bold;
-                margin-bottom: 10px;
-            }
-            .token-value {
-                background: white;
-                border: 1px solid #7A9B57;
-                border-radius: 8px;
-                padding: 15px;
-                font-size: 20px;
-                font-weight: bold;
-                color: #333;
-                letter-spacing: 1px;
-                margin-bottom: 15px;
-                word-break: break-all;
-            }
-            .copy-button {
-                background: #7A9B57;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                cursor: pointer;
-                font-size: 14px;
-                margin-top: 10px;
-            }
-            .copy-button:hover {
-                background: #5a7a42;
-            }
             .instructions {
                 margin-top: 20px;
                 padding: 15px;
@@ -428,64 +379,19 @@ app.get('/payment/success', async (req, res) => {
                 </div>
             </div>
             
+            <div class="instructions">
+                <strong>Siguientes pasos:</strong><br>
+                1. Regresa a la aplicación móvil<br>
+                2. Reinicia sesión para ver los cambios<br>
+                3. Podrás elegir tu nutriólogo o recibir asignación automática
+            </div>
             
             <a href="#" class="return-button" onclick="window.close()">
-                ¡Ya puedes regresar a la app para disfrutar de los beneficios!
+                Regresar a la aplicación
             </a>
         </div>
         
         <script>
-            function copyToken() {
-                const tokenValue = document.getElementById('tokenValue').textContent;
-                
-                if (navigator.clipboard) {
-                    navigator.clipboard.writeText(tokenValue).then(() => {
-                        const button = document.querySelector('.copy-button');
-                        const originalText = button.textContent;
-                        button.textContent = '✅ Copiado!';
-                        button.style.background = '#28a745';
-                        
-                        setTimeout(() => {
-                            button.textContent = originalText;
-                            button.style.background = '#7A9B57';
-                        }, 2000);
-                    }).catch(err => {
-                        console.error('Error copiando:', err);
-                        fallbackCopyToken(tokenValue);
-                    });
-                } else {
-                    fallbackCopyToken(tokenValue);
-                }
-            }
-            
-            function fallbackCopyToken(text) {
-                const textArea = document.createElement('textarea');
-                textArea.value = text;
-                textArea.style.position = 'fixed';
-                textArea.style.left = '-999999px';
-                textArea.style.top = '-999999px';
-                document.body.appendChild(textArea);
-                textArea.focus();
-                textArea.select();
-                
-                try {
-                    document.execCommand('copy');
-                    const button = document.querySelector('.copy-button');
-                    button.textContent = '✅ Copiado!';
-                    button.style.background = '#28a745';
-                    
-                    setTimeout(() => {
-                        button.textContent = '📋 Copiar Token';
-                        button.style.background = '#7A9B57';
-                    }, 2000);
-                } catch (err) {
-                    console.error('Error copiando:', err);
-                    alert('Token: ' + text);
-                }
-                
-                document.body.removeChild(textArea);
-            }
-            
             // Intentar cerrar la ventana automáticamente después de 30 segundos
             setTimeout(() => {
                 try {
@@ -515,60 +421,113 @@ app.get('/payment/success', async (req, res) => {
   }
 });
 
-// NUEVA RUTA: Verificar token de suscripción
-app.post('/api/verify-subscription-token', async (req, res) => {
+//verificar token nutriologo
+app.post('/api/verify-nutritionist-token', async (req, res) => {
   try {
-    const { token, userId } = req.body;
+    const { token, clientId } = req.body;
     
-    if (!token || !userId) {
+    console.log('🔍 === VERIFICANDO TOKEN DE NUTRIÓLOGO ===');
+    console.log('📥 Token recibido:', token);
+    console.log('👤 Cliente ID:', clientId);
+    
+    if (!token || !clientId) {
       return res.status(400).json({
         success: false,
-        message: 'Token y ID de usuario son requeridos'
+        message: 'Token y ID de cliente son requeridos'
       });
     }
     
     const connection = await mysql.createConnection(dbConfig);
     
     try {
-      // Buscar token
-      const [tokenRows] = await connection.execute(
-        `SELECT * FROM subscription_tokens 
-         WHERE token = ? AND user_id = ? AND status = 'active' AND expires_at > NOW()`,
-        [token, userId]
+      // Buscar nutriólogo con ese token
+      const [nutriRows] = await connection.execute(
+        `SELECT id_nut, CONCAT(nombre_nut, ' ', app_nut, ' ', COALESCE(apm_nut, '')) as name, 
+                especialidad_nut, tiene_acceso, activo, verificado
+         FROM nutriologos 
+         WHERE token_vinculacion = ? AND activo = 1 AND verificado = 'aprobado'`,
+        [token.trim().toUpperCase()]
       );
       
-      if (tokenRows.length === 0) {
+      if (nutriRows.length === 0) {
+        console.log('❌ Token de nutriólogo no encontrado o inválido');
         return res.json({
           success: false,
-          message: 'Token inválido, expirado o ya usado'
+          message: 'Token de nutriólogo inválido o nutriólogo no activo'
         });
       }
       
-      const tokenData = tokenRows[0];
+      const nutriologo = nutriRows[0];
+      console.log('✅ Nutriólogo encontrado:', nutriologo.name);
       
-      // Marcar token como usado
-      await connection.execute(
-        `UPDATE subscription_tokens 
-         SET status = 'used', used_at = NOW() 
-         WHERE id = ?`,
-        [tokenData.id]
+      // Verificar que el nutriólogo tenga acceso
+      if (!nutriologo.tiene_acceso) {
+        console.log('❌ Nutriólogo sin acceso');
+        return res.json({
+          success: false,
+          message: 'El nutriólogo no tiene acceso activo al sistema'
+        });
+      }
+      
+      // Verificar si el cliente ya está asignado a algún nutriólogo
+      const [clientRows] = await connection.execute(
+        `SELECT id_nut, CONCAT(nombre_cli, ' ', app_cli) as client_name 
+         FROM clientes 
+         WHERE id_cli = ?`,
+        [clientId]
       );
       
-      // Activar acceso del usuario
+      if (clientRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado'
+        });
+      }
+      
+      const cliente = clientRows[0];
+      
+      // Si ya tiene un nutriólogo asignado, preguntar si quiere cambiar
+      if (cliente.id_nut && cliente.id_nut !== nutriologo.id_nut) {
+        // Obtener nombre del nutriólogo actual
+        const [currentNutriRows] = await connection.execute(
+          `SELECT CONCAT(nombre_nut, ' ', app_nut) as current_name 
+           FROM nutriologos 
+           WHERE id_nut = ?`,
+          [cliente.id_nut]
+        );
+        
+        const currentNutriName = currentNutriRows[0]?.current_name || 'Nutriólogo anterior';
+        
+        console.log(`⚠️ Cliente ya tiene nutriólogo: ${currentNutriName}`);
+        return res.json({
+          success: false,
+          message: `Ya estás vinculado con ${currentNutriName}. ¿Deseas cambiar a ${nutriologo.name}?`,
+          conflict: true,
+          current_nutritionist: currentNutriName,
+          new_nutritionist: nutriologo.name,
+          new_nutritionist_id: nutriologo.id_nut
+        });
+      }
+      
+      // Actualizar cliente con el nuevo nutriólogo
       await connection.execute(
         `UPDATE clientes 
-         SET tiene_acceso = TRUE, fecha_pago = NOW() 
+         SET id_nut = ?, modo = 'supervisado' 
          WHERE id_cli = ?`,
-        [userId]
+        [nutriologo.id_nut, clientId]
       );
       
-      console.log(`✅ Token usado exitosamente: ${token} para usuario ${userId}`);
+      console.log(`✅ Cliente ${cliente.client_name} vinculado con nutriólogo ${nutriologo.name}`);
       
       res.json({
         success: true,
-        message: 'Token verificado exitosamente. Acceso activado.',
-        plan_type: tokenData.plan_type,
-        activated_at: new Date().toISOString()
+        message: `Te has vinculado exitosamente con ${nutriologo.name}`,
+        nutritionist: {
+          id: nutriologo.id_nut,
+          name: nutriologo.name,
+          especialidad: nutriologo.especialidad_nut
+        },
+        client_mode: 'supervisado'
       });
       
     } finally {
@@ -576,7 +535,7 @@ app.post('/api/verify-subscription-token', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('❌ Error verificando token:', error);
+    console.error('❌ Error verificando token de nutriólogo:', error);
     res.status(500).json({
       success: false,
       message: 'Error interno del servidor'
@@ -584,14 +543,190 @@ app.post('/api/verify-subscription-token', async (req, res) => {
   }
 });
 
-const generateSubscriptionToken = (userId, planType, paymentId) => {
-  // Formato: SUB + planType + userId + timestamp + random
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substr(2, 4).toUpperCase();
-  const planPrefix = planType === 'cliente' ? 'CLI' : 'NUT';
-  
-  return `SUB${planPrefix}${userId}${timestamp}${random}`;
-};
+//cambio de nutriologo default por el asignado fisicamente
+app.post('/api/confirm-nutritionist-change', async (req, res) => {
+  try {
+    const { clientId, newNutritionistId, confirm } = req.body;
+    
+    if (!clientId || !newNutritionistId || confirm !== true) {
+      return res.status(400).json({
+        success: false,
+        message: 'Datos incompletos o confirmación requerida'
+      });
+    }
+    
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      // Obtener información del nuevo nutriólogo
+      const [nutriRows] = await connection.execute(
+        `SELECT CONCAT(nombre_nut, ' ', app_nut, ' ', COALESCE(apm_nut, '')) as name, 
+                especialidad_nut
+         FROM nutriologos 
+         WHERE id_nut = ? AND activo = 1 AND verificado = 'aprobado'`,
+        [newNutritionistId]
+      );
+      
+      if (nutriRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Nutriólogo no encontrado'
+        });
+      }
+      
+      const nutriologo = nutriRows[0];
+      
+      // Actualizar cliente
+      await connection.execute(
+        `UPDATE clientes 
+         SET id_nut = ?, modo = 'supervisado' 
+         WHERE id_cli = ?`,
+        [newNutritionistId, clientId]
+      );
+      
+      console.log(`✅ Cambio de nutriólogo confirmado para cliente ${clientId}`);
+      
+      res.json({
+        success: true,
+        message: `Cambio realizado. Ahora estás vinculado con ${nutriologo.name}`,
+        nutritionist: {
+          id: newNutritionistId,
+          name: nutriologo.name,
+          especialidad: nutriologo.especialidad_nut
+        }
+      });
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error confirmando cambio de nutriólogo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
+//Asignación automática de nutriólogo
+app.post('/api/auto-assign-nutritionist', async (req, res) => {
+  try {
+    const { clientId } = req.body;
+    
+    console.log('🤖 === ASIGNACIÓN AUTOMÁTICA DE NUTRIÓLOGO ===');
+    console.log('👤 Cliente ID:', clientId);
+    
+    if (!clientId) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID de cliente es requerido'
+      });
+    }
+    
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+      // Verificar que el cliente existe
+      const [clientRows] = await connection.execute(
+        `SELECT id_cli, CONCAT(nombre_cli, ' ', app_cli) as client_name, id_nut 
+         FROM clientes 
+         WHERE id_cli = ?`,
+        [clientId]
+      );
+      
+      if (clientRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Cliente no encontrado'
+        });
+      }
+      
+      const cliente = clientRows[0];
+      
+      // Si ya tiene nutriólogo asignado, no hacer nada
+      if (cliente.id_nut) {
+        const [currentNutriRows] = await connection.execute(
+          `SELECT CONCAT(nombre_nut, ' ', app_nut) as name 
+           FROM nutriologos 
+           WHERE id_nut = ?`,
+          [cliente.id_nut]
+        );
+        
+        const currentNutriName = currentNutriRows[0]?.name || 'Nutriólogo asignado';
+        
+        return res.json({
+          success: true,
+          message: `Ya tienes un nutriólogo asignado: ${currentNutriName}`,
+          nutritionist: {
+            id: cliente.id_nut,
+            name: currentNutriName,
+            assigned_type: 'existing'
+          }
+        });
+      }
+      
+      // Buscar nutriólogo disponible con menos clientes
+      const [availableNutriRows] = await connection.execute(`
+        SELECT n.id_nut, 
+               CONCAT(n.nombre_nut, ' ', n.app_nut, ' ', COALESCE(n.apm_nut, '')) as name,
+               n.especialidad_nut,
+               COUNT(c.id_cli) as client_count
+        FROM nutriologos n
+        LEFT JOIN clientes c ON n.id_nut = c.id_nut
+        WHERE n.activo = 1 
+          AND n.verificado = 'aprobado' 
+          AND n.tiene_acceso = 1
+        GROUP BY n.id_nut, n.nombre_nut, n.app_nut, n.apm_nut, n.especialidad_nut
+        ORDER BY client_count ASC, RAND()
+        LIMIT 1
+      `);
+      
+      if (availableNutriRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No hay nutriólogos disponibles en este momento'
+        });
+      }
+      
+      const nutriologo = availableNutriRows[0];
+      
+      // Asignar nutriólogo al cliente
+      await connection.execute(
+        `UPDATE clientes 
+         SET id_nut = ?, modo = 'supervisado' 
+         WHERE id_cli = ?`,
+        [nutriologo.id_nut, clientId]
+      );
+      
+      console.log(`✅ Cliente ${cliente.client_name} asignado automáticamente a ${nutriologo.name}`);
+      console.log(`📊 El nutriólogo tenía ${nutriologo.client_count} clientes`);
+      
+      res.json({
+        success: true,
+        message: `Se te ha asignado automáticamente el nutriólogo ${nutriologo.name}`,
+        nutritionist: {
+          id: nutriologo.id_nut,
+          name: nutriologo.name,
+          especialidad: nutriologo.especialidad_nut,
+          assigned_type: 'automatic',
+          previous_client_count: nutriologo.client_count
+        },
+        client_mode: 'supervisado'
+      });
+      
+    } finally {
+      await connection.end();
+    }
+    
+  } catch (error) {
+    console.error('❌ Error en asignación automática:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
 
 //ThinkSpeak - Mongodb
 
@@ -1173,47 +1308,6 @@ app.post('/api/dieta-actual', async (req, res) => {
     res.status(500).json({ error: 'Error en la base de datos' });
   }
 });
-
-// FUNCIÓN: Guardar token en base de datos
-const saveSubscriptionToken = async (userId, token, paymentId, planType) => {
-  try {
-    const connection = await mysql.createConnection(dbConfig);
-    
-    // Crear tabla si no existe
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS subscription_tokens (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        token VARCHAR(50) UNIQUE NOT NULL,
-        payment_id VARCHAR(100),
-        plan_type VARCHAR(20) NOT NULL,
-        status ENUM('active', 'used', 'expired') DEFAULT 'active',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP + INTERVAL 7 DAY),
-        used_at TIMESTAMP NULL,
-        INDEX idx_token (token),
-        INDEX idx_user_id (user_id),
-        INDEX idx_status (status)
-      )
-    `);
-    
-    // Insertar token
-    await connection.execute(
-      `INSERT INTO subscription_tokens 
-       (user_id, token, payment_id, plan_type) 
-       VALUES (?, ?, ?, ?)`,
-      [userId, token, paymentId, planType]
-    );
-    
-    await connection.end();
-    console.log(`✅ Token de suscripción guardado: ${token}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Error guardando token:', error);
-    return false;
-  }
-};
-
 
 // GET /payment/failure - Pago fallido
 app.get('/payment/failure', (req, res) => {
