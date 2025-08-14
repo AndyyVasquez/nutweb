@@ -3180,103 +3180,54 @@ app.get('/api/iot/pedometer/steps/:user_id', async (req, res) => {
 });
 
 // En tu endpoint /api/iot/pedometer/steps/mongo/:id_cli
-app.get('/api/iot/pedometer/steps/mongo/:id_cli', async (req, res) => {
+app.get('/api/iot/pedometer/steps/mongo/:user_id', async (req, res) => {
   try {
-    const { id_cli } = req.params;
+    const { user_id } = req.params;
     const { fecha } = req.query;
-
+    const targetDate = fecha || new Date().toISOString().split('T')[0];
+    
+    console.log(`📊 ESP32 consultando pasos para usuario ${user_id}, fecha: ${targetDate}`);
+    
     if (!mongoDB) {
-      return res.status(500).json({
-        success: false,
-        message: 'MongoDB no está disponible'
-      });
+      console.log('❌ MongoDB no disponible');
+      return res.json({ pasos: 0, fecha: targetDate });
     }
-
-    console.log('👟 Obteniendo pasos de MongoDB para usuario:', id_cli);
-    console.log('🧪 Consulta esperada con fecha:', fecha);
-
+    
     const collection = mongoDB.collection('actividad_pasos');
-
-    // 🔍 DEBUGGING COMPLETO
-    try {
-      // Verificar que la colección existe
-      const collections = await mongoDB.listCollections().toArray();
-      console.log('📚 Todas las colecciones:', collections.map(c => c.name));
-
-      // Contar documentos totales
-      const totalDocs = await collection.countDocuments();
-      console.log('📊 Total documentos en actividad_pasos:', totalDocs);
-
-      // Ver TODOS los documentos
-      const allDocs = await collection.find({}).toArray();
-      console.log('📄 TODOS los documentos:', JSON.stringify(allDocs, null, 2));
-
-      // Ver documentos para este usuario específico
-      const userDocs = await collection.find({ id_cli: parseInt(id_cli) }).toArray();
-      console.log('👤 Documentos para usuario', id_cli, ':', JSON.stringify(userDocs, null, 2));
-
-      // Ver documentos para esta fecha específica
-      if (fecha) {
-        const dateDocs = await collection.find({ fecha: fecha }).toArray();
-        console.log('📅 Documentos para fecha', fecha, ':', JSON.stringify(dateDocs, null, 2));
-      }
-
-    } catch (debugError) {
-      console.error('❌ Error en debugging:', debugError);
-    }
-
-    const filter = {
-      id_cli: parseInt(id_cli),
-      ...(fecha && { fecha: fecha })
-    };
-
-    console.log('🔍 Filtro de búsqueda:', filter);
-
-    const documentos = await collection
-      .find(filter)
-      .sort({ timestamp: -1 })
-      .limit(1)
-      .toArray();
-
-    console.log("📄 Documentos encontrados con filtro:", documentos);
-
-    const documento = documentos[0];
-
+    
+    const documento = await collection.findOne({
+      id_cli: parseInt(user_id),
+      fecha: targetDate
+    });
+    
     if (documento) {
+      console.log(`✅ Pasos encontrados para ESP32: ${documento.pasos}`);
       res.json({
-        success: true,
-        data: {
-          fecha: documento.fecha,
-          pasos: documento.pasos,
-          calorias_gastadas: documento.calorias_gastadas,
-          distancia_km: documento.distancia_km,
-          hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
-          dispositivo: documento.dispositivo
-        }
+        pasos: documento.pasos,
+        fecha: documento.fecha,
+        hora_ultima_actualizacion: documento.hora_ultima_actualizacion,
+        calorias_gastadas: documento.calorias_gastadas || 0,
+        distancia_km: documento.distancia_km || 0
       });
     } else {
+      console.log(`❌ No se encontraron pasos para usuario ${user_id}`);
       res.json({
-        success: true,
-        data: {
-          fecha: fecha,
-          pasos: 0,
-          calorias_gastadas: 0,
-          distancia_km: 0,
-          hora_ultima_actualizacion: null,
-          dispositivo: null
-        }
+        pasos: 0,
+        fecha: targetDate,
+        hora_ultima_actualizacion: null,
+        calorias_gastadas: 0,
+        distancia_km: 0
       });
     }
+    
   } catch (error) {
-    console.error('❌ Error obteniendo pasos de MongoDB:', error);
+    console.error('❌ Error obteniendo pasos para ESP32:', error);
     res.status(500).json({
-      success: false,
-      message: 'Error obteniendo datos de pasos desde MongoDB',
+      pasos: 0,
       error: error.message
     });
   }
 });
-
 // REEMPLAZA COMPLETAMENTE tu endpoint POST /api/iot/pedometer/save
 
 app.post('/api/iot/pedometer/save', async (req, res) => {
@@ -3840,51 +3791,55 @@ app.post('/api/iot/pedometer/assign', async (req, res) => {
 app.get('/api/iot/pedometer/assigned-user', (req, res) => {
   try {
     console.log('🔍 ESP32 consultando usuario asignado...');
+    console.log('📋 Asignaciones disponibles:', connectedPedometers.size);
     
-    // Buscar asignación activa (puede ser cualquier dispositivo)
+    // Buscar cualquier asignación activa
     let assignment = null;
     
-    // Primero buscar en asignaciones ThingSpeak
+    // 1. Buscar asignación específica de ThingSpeak
     const thingspeakAssignment = connectedPedometers.get('thingspeak_device');
-    if (thingspeakAssignment && thingspeakAssignment.connection_type === 'thingspeak') {
+    if (thingspeakAssignment) {
       assignment = thingspeakAssignment;
+      console.log('✅ Encontrada asignación ThingSpeak:', assignment.user_name);
     }
     
-    // Si no hay asignación ThingSpeak, buscar otras asignaciones
+    // 2. Si no hay ThingSpeak, buscar cualquier otra asignación
     if (!assignment && connectedPedometers.size > 0) {
-      // Tomar la primera asignación disponible
       assignment = Array.from(connectedPedometers.values())[0];
+      console.log('✅ Encontrada asignación alternativa:', assignment.user_name);
     }
     
+    // 3. Respuesta al ESP32
     if (assignment) {
-      console.log(`✅ Usuario asignado encontrado: ${assignment.user_id} (${assignment.user_name})`);
+      console.log(`✅ Respondiendo al ESP32: Usuario ${assignment.user_id} (${assignment.user_name})`);
+      
+      // RESPUESTA EN FORMATO QUE EL ESP32 PUEDE PARSEAR
       res.json({
         assigned: true,
         user_id: assignment.user_id,
         user_name: assignment.user_name,
-        device_id: assignment.device_id || 'esp32_default',
-        assigned_at: assignment.assigned_at,
-        connection_type: assignment.connection_type || 'esp32_direct'
+        device_id: assignment.device_id || 'esp32_default'
       });
+      
     } else {
-      console.log('❌ No hay usuario asignado');
+      console.log('❌ No hay usuario asignado para ESP32');
+      
+      // RESPUESTA VACÍA PARA ESP32
       res.json({
         assigned: false,
         user_id: null,
-        user_name: null,
-        message: 'No hay usuario asignado al podómetro'
+        user_name: null
       });
     }
     
   } catch (error) {
-    console.error('❌ Error obteniendo usuario asignado para ESP32:', error);
+    console.error('❌ Error en endpoint ESP32:', error);
     res.status(500).json({
       assigned: false,
-      error: 'Error interno del servidor'
+      error: 'Error interno'
     });
   }
 });
-
 app.post('/api/iot/pedometer/release-assignment', async (req, res) => {
   try {
     const { user_id } = req.body;
