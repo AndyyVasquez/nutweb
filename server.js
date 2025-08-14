@@ -5178,6 +5178,18 @@ app.post('/api/register-client', async (req, res) => {
         });
       }
 
+      let sexo_db;
+      if (sexo_cli === 'm') {
+        sexo_db = 'hombre';
+      } else if (sexo_cli === 'f') {
+        sexo_db = 'mujer';
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'El campo sexo_cli debe ser "m" o "f"'
+      });
+    }
+
       const [result] = await connection.execute(
         `INSERT INTO clientes (
           nombre_cli, app_cli, apm_cli, correo_cli, password_cli, 
@@ -5186,7 +5198,7 @@ app.post('/api/register-client', async (req, res) => {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
         [
           nombre_cli, app_cli, apm_cli, correo_cli, password_cli,
-          edad_cli, sexo_cli, peso_cli, estatura_cli, faf_cli || 1.2, geb_cli || 0,
+          edad_cli, sexo_db, peso_cli, estatura_cli, faf_cli || 1.2, geb_cli || 0,
           modo || 'autonomo'
         ]
       );
