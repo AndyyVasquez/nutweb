@@ -379,15 +379,8 @@ app.get('/payment/success', async (req, res) => {
                 </div>
             </div>
             
-            <div class="instructions">
-                <strong>Siguientes pasos:</strong><br>
-                1. Regresa a la aplicación móvil<br>
-                2. Reinicia sesión para ver los cambios<br>
-                3. Podrás elegir tu nutriólogo o recibir asignación automática
-            </div>
-            
             <a href="#" class="return-button" onclick="window.close()">
-                Regresar a la aplicación
+                Regresa a la aplicación
             </a>
         </div>
         
