@@ -430,7 +430,7 @@ app.get('/payment/success', async (req, res) => {
             
             
             <a href="#" class="return-button" onclick="window.close()">
-                Cerrar Ventana, regresa a la app
+                ¡Ya puedes regresar a la app para disfrutar de los beneficios!
             </a>
         </div>
         
