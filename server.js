@@ -6598,13 +6598,16 @@ app.post('/api/cliente/calorias', async (req, res) => {
     try {
       const [results] = await connection.execute(
         `SELECT DATE(com.fecha) AS dia, AVG(com.calorias_totales) AS calorias
-         FROM comidas_registradas com
-         INNER JOIN dietas d ON com.id_cli = d.id_cli
-         INNER JOIN clientes c ON com.id_cli = c.id_cli
-         WHERE com.id_cli = ? AND c.id_nut = ?
-           AND com.fecha BETWEEN d.fecha_inicio AND d.fecha_fin
-         GROUP BY DATE(com.fecha)
-         ORDER BY dia ASC`,
+FROM comidas_registradas com
+INNER JOIN clientes c ON com.id_cli = c.id_cli
+INNER JOIN dietas d 
+    ON com.id_cli = d.id_cli 
+    AND com.fecha BETWEEN d.fecha_inicio AND d.fecha_fin
+WHERE com.id_cli = ? 
+  AND c.id_nut = ?
+GROUP BY DATE(com.fecha)
+ORDER BY dia ASC;
+`,
         [idCliente, idNutriologo]
       );
 
