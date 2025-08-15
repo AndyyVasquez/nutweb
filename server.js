@@ -941,22 +941,20 @@ async function processThingSpeakEntry(entry, collection) {
   try {
     // Extraer datos de la entrada de ThingSpeak
     const pasos = parseInt(entry.field1) || 0; // field1 contiene los pasos
-    const userId = parseInt(entry.field2) || null; // field2 contiene el user_id
     const created_at = new Date(entry.created_at);
     const entry_id = parseInt(entry.entry_id);
     
-    // Si no hay user_id en field2, usar determinación automática
-    const id_cli = userId || await determineUserFromEntry(entry);
-    
-    console.log(`📊 Procesando: ${pasos} pasos del usuario ${id_cli} (${created_at.toISOString()})`);
+    // Extraer fecha y hora
+    const fecha = created_at.toISOString().split('T')[0]; // YYYY-MM-DD
+    const hora = created_at.toTimeString().split(' ')[0].slice(0, 5); // HH:MM
 
-    // Resto de tu lógica existente...
-    const fecha = created_at.toISOString().split('T')[0];
-    const hora = created_at.toTimeString().split(' ')[0].slice(0, 5);
-    const calorias_gastadas = Math.round(pasos * 0.04);
-    const distancia_km = +(pasos * 0.75 / 1000).toFixed(2);
+    // Calcular métricas
+    const calorias_gastadas = Math.round(pasos * 0.04); // Estimación: 0.04 cal/paso
+    const distancia_km = +(pasos * 0.75 / 1000).toFixed(2); // Estimación: 75cm/paso
 
-    // Verificar si ya existe este registro
+    console.log(`📊 Procesando: ${pasos} pasos del ${fecha} ${hora}`);
+
+    // Verificar si ya existe este registro en MongoDB
     const existingDoc = await collection.findOne({
       entry_id_thingspeak: entry_id
     });
@@ -966,12 +964,9 @@ async function processThingSpeakEntry(entry, collection) {
       return;
     }
 
-    // Buscar registro existente para este usuario y fecha
-    const existingDateDoc = await collection.findOne({
-      id_cli: id_cli,
-      fecha: fecha
-    });
+ const id_cli = await determineUserFromEntry(entry);
 
+    // Crear documento para MongoDB
     const documento = {
       id_cli: id_cli,
       fecha: fecha,
@@ -979,38 +974,52 @@ async function processThingSpeakEntry(entry, collection) {
       calorias_gastadas: calorias_gastadas,
       distancia_km: distancia_km,
       hora_ultima_actualizacion: hora,
-      dispositivo: 'ESP32_ThingSpeak_Enhanced',
+      dispositivo: 'ESP32_ThingSpeak',
       estado: 'activo',
       timestamp: created_at,
+      // Campos específicos de ThingSpeak
       entry_id_thingspeak: entry_id,
       created_at_thingspeak: entry.created_at,
-      sincronizado_desde: 'thingspeak_with_user',
-      sincronizado_en: new Date(),
-      user_id_from_device: userId // Indicar si vino del dispositivo
+      sincronizado_desde: 'thingspeak',
+      sincronizado_en: new Date()
     };
 
-    if (existingDateDoc) {
-      // Solo actualizar si los pasos son mayores (evitar retrocesos)
-      if (pasos >= existingDateDoc.pasos) {
-        await collection.updateOne(
-          { _id: existingDateDoc._id },
-          { $set: documento }
-        );
-        console.log(`🔄 Actualizado registro existente: ${pasos} pasos`);
-      } else {
-         console.log(`⚠️ Pasos menores que existente (${pasos} < ${existingDateDoc.pasos}), no actualizando`);
-     }
-   } else {
-     // Crear nuevo registro
-     const result = await collection.insertOne(documento);
-     console.log(`✅ Nuevo registro creado: ${result.insertedId}`);
-   }
+    // Verificar si ya existe un registro para este usuario y fecha
+    const existingDateDoc = await collection.findOne({
+      id_cli: id_cli,
+      fecha: fecha
+    });
 
- } catch (error) {
-   console.error('❌ Error procesando entrada de ThingSpeak:', error);
-   throw error;
- }
+    if (existingDateDoc) {
+      // Actualizar registro existente con los datos más recientes
+      await collection.updateOne(
+        { _id: existingDateDoc._id },
+        { 
+          $set: {
+            pasos: pasos,
+            calorias_gastadas: calorias_gastadas,
+            distancia_km: distancia_km,
+            hora_ultima_actualizacion: hora,
+            timestamp: created_at,
+            entry_id_thingspeak: entry_id,
+            sincronizado_en: new Date()
+          }
+        }
+      );
+      
+      console.log(`🔄 Actualizado registro existente para ${fecha}`);
+    } else {
+      // Crear nuevo registro
+      const result = await collection.insertOne(documento);
+      console.log(`✅ Nuevo registro creado: ${result.insertedId}`);
+    }
+
+  } catch (error) {
+    console.error('❌ Error procesando entrada de ThingSpeak:', error);
+    throw error;
+  }
 }
+
 
 app.post('/api/iot/pedometer/sync-user-steps', async (req, res) => {
   try {
@@ -1233,7 +1242,6 @@ app.post('/api/sync/thingspeak', async (req, res) => {
     });
   }
 });
-
 app.get('/api/thingspeak/latest/:results?', async (req, res) => {
   try {
     const results = parseInt(req.params.results) || 10;
@@ -3788,58 +3796,58 @@ app.post('/api/iot/pedometer/assign', async (req, res) => {
   }
 });
 
-app.get('/api/iot/pedometer/assigned-user', (req, res) => {
-  try {
-    console.log('🔍 ESP32 consultando usuario asignado...');
-    console.log('📋 Asignaciones disponibles:', connectedPedometers.size);
+// app.get('/api/iot/pedometer/assigned-user', (req, res) => {
+//   try {
+//     console.log('🔍 ESP32 consultando usuario asignado...');
+//     console.log('📋 Asignaciones disponibles:', connectedPedometers.size);
     
-    // Buscar cualquier asignación activa
-    let assignment = null;
+//     // Buscar cualquier asignación activa
+//     let assignment = null;
     
-    // 1. Buscar asignación específica de ThingSpeak
-    const thingspeakAssignment = connectedPedometers.get('thingspeak_device');
-    if (thingspeakAssignment) {
-      assignment = thingspeakAssignment;
-      console.log('✅ Encontrada asignación ThingSpeak:', assignment.user_name);
-    }
+//     // 1. Buscar asignación específica de ThingSpeak
+//     const thingspeakAssignment = connectedPedometers.get('thingspeak_device');
+//     if (thingspeakAssignment) {
+//       assignment = thingspeakAssignment;
+//       console.log('✅ Encontrada asignación ThingSpeak:', assignment.user_name);
+//     }
     
-    // 2. Si no hay ThingSpeak, buscar cualquier otra asignación
-    if (!assignment && connectedPedometers.size > 0) {
-      assignment = Array.from(connectedPedometers.values())[0];
-      console.log('✅ Encontrada asignación alternativa:', assignment.user_name);
-    }
+//     // 2. Si no hay ThingSpeak, buscar cualquier otra asignación
+//     if (!assignment && connectedPedometers.size > 0) {
+//       assignment = Array.from(connectedPedometers.values())[0];
+//       console.log('✅ Encontrada asignación alternativa:', assignment.user_name);
+//     }
     
-    // 3. Respuesta al ESP32
-    if (assignment) {
-      console.log(`✅ Respondiendo al ESP32: Usuario ${assignment.user_id} (${assignment.user_name})`);
+//     // 3. Respuesta al ESP32
+//     if (assignment) {
+//       console.log(`✅ Respondiendo al ESP32: Usuario ${assignment.user_id} (${assignment.user_name})`);
       
-      // RESPUESTA EN FORMATO QUE EL ESP32 PUEDE PARSEAR
-      res.json({
-        assigned: true,
-        user_id: assignment.user_id,
-        user_name: assignment.user_name,
-        device_id: assignment.device_id || 'esp32_default'
-      });
+//       // RESPUESTA EN FORMATO QUE EL ESP32 PUEDE PARSEAR
+//       res.json({
+//         assigned: true,
+//         user_id: assignment.user_id,
+//         user_name: assignment.user_name,
+//         device_id: assignment.device_id || 'esp32_default'
+//       });
       
-    } else {
-      console.log('❌ No hay usuario asignado para ESP32');
+//     } else {
+//       console.log('❌ No hay usuario asignado para ESP32');
       
-      // RESPUESTA VACÍA PARA ESP32
-      res.json({
-        assigned: false,
-        user_id: null,
-        user_name: null
-      });
-    }
+//       // RESPUESTA VACÍA PARA ESP32
+//       res.json({
+//         assigned: false,
+//         user_id: null,
+//         user_name: null
+//       });
+//     }
     
-  } catch (error) {
-    console.error('❌ Error en endpoint ESP32:', error);
-    res.status(500).json({
-      assigned: false,
-      error: 'Error interno'
-    });
-  }
-});
+//   } catch (error) {
+//     console.error('❌ Error en endpoint ESP32:', error);
+//     res.status(500).json({
+//       assigned: false,
+//       error: 'Error interno'
+//     });
+//   }
+// });
 app.post('/api/iot/pedometer/release-assignment', async (req, res) => {
   try {
     const { user_id } = req.body;
