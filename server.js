@@ -1021,6 +1021,52 @@ async function processThingSpeakEntry(entry, collection) {
 }
 
 
+// GET /api/iot/pedometer/user-assignment/:user_id - Verificar si un usuario específico tiene asignación
+app.get('/api/iot/pedometer/user-assignment/:user_id', (req, res) => {
+  try {
+    const { user_id } = req.params;
+    console.log(`🔍 Verificando asignación para usuario: ${user_id}`);
+    
+    // Buscar si este usuario específico tiene una asignación
+    let userAssignment = null;
+    
+    for (const [deviceId, assignment] of connectedPedometers.entries()) {
+      if (assignment.user_id === parseInt(user_id)) {
+        userAssignment = assignment;
+        break;
+      }
+    }
+    
+    if (userAssignment) {
+      console.log(`✅ Usuario ${user_id} tiene asignación activa`);
+      res.json({
+        success: true,
+        is_assigned: true,
+        assignment: {
+          device_id: userAssignment.device_id,
+          assigned_at: userAssignment.assigned_at,
+          connection_type: userAssignment.connection_type,
+          device_type: userAssignment.device_type
+        }
+      });
+    } else {
+      console.log(`❌ Usuario ${user_id} NO tiene asignación`);
+      res.json({
+        success: true,
+        is_assigned: false,
+        assignment: null
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error verificando asignación de usuario:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.post('/api/iot/pedometer/sync-user-steps', async (req, res) => {
   try {
     const { 
@@ -3450,6 +3496,7 @@ app.post('/api/iot/pedometer/save', async (req, res) => {
   }
 });
 
+// Reemplaza tu endpoint actual POST /api/iot/pedometer/assign-to-user
 app.post('/api/iot/pedometer/assign-to-user', async (req, res) => {
   try {
     const { user_id, user_name, device_id } = req.body;
@@ -3485,11 +3532,9 @@ app.post('/api/iot/pedometer/assign-to-user', async (req, res) => {
       // Verificar si ya hay otro usuario asignado
       const existingAssignment = connectedPedometers.get('thingspeak_device');
       if (existingAssignment && existingAssignment.user_id !== parseInt(user_id)) {
-        return res.status(409).json({
-          success: false,
-          message: `El podómetro ya está asignado a ${existingAssignment.user_name}`,
-          current_assignment: existingAssignment
-        });
+        // Liberar asignación anterior
+        console.log(`⚠️ Liberando asignación anterior de usuario ${existingAssignment.user_id}`);
+        connectedPedometers.delete('thingspeak_device');
       }
       
       // Crear nueva asignación
@@ -3516,7 +3561,8 @@ app.post('/api/iot/pedometer/assign-to-user', async (req, res) => {
           user_name: user.nombre,
           device_id: assignment.device_id,
           device_type: assignment.device_type,
-          assigned_at: assignment.assigned_at
+          assigned_at: assignment.assigned_at,
+          connection_type: assignment.connection_type
         }
       });
       
@@ -3528,7 +3574,7 @@ app.post('/api/iot/pedometer/assign-to-user', async (req, res) => {
     console.error('❌ Error asignando podómetro:', error);
     res.status(500).json({
       success: false,
-      message: 'Error obteniendo estadísticas',
+      message: 'Error interno del servidor',
       error: error.message
     });
   }
@@ -3796,58 +3842,47 @@ app.post('/api/iot/pedometer/assign', async (req, res) => {
   }
 });
 
-// app.get('/api/iot/pedometer/assigned-user', (req, res) => {
-//   try {
-//     console.log('🔍 ESP32 consultando usuario asignado...');
-//     console.log('📋 Asignaciones disponibles:', connectedPedometers.size);
+// GET /api/iot/pedometer/assigned-user - Para que el ESP32 y la app consulten el usuario asignado
+app.get('/api/iot/pedometer/assigned-user', (req, res) => {
+  try {
+    console.log('🔍 Consultando usuario asignado...');
+    console.log('📋 Asignaciones disponibles:', connectedPedometers.size);
     
-//     // Buscar cualquier asignación activa
-//     let assignment = null;
+    // Buscar asignación específica de ThingSpeak
+    const thingspeakAssignment = connectedPedometers.get('thingspeak_device');
     
-//     // 1. Buscar asignación específica de ThingSpeak
-//     const thingspeakAssignment = connectedPedometers.get('thingspeak_device');
-//     if (thingspeakAssignment) {
-//       assignment = thingspeakAssignment;
-//       console.log('✅ Encontrada asignación ThingSpeak:', assignment.user_name);
-//     }
-    
-//     // 2. Si no hay ThingSpeak, buscar cualquier otra asignación
-//     if (!assignment && connectedPedometers.size > 0) {
-//       assignment = Array.from(connectedPedometers.values())[0];
-//       console.log('✅ Encontrada asignación alternativa:', assignment.user_name);
-//     }
-    
-//     // 3. Respuesta al ESP32
-//     if (assignment) {
-//       console.log(`✅ Respondiendo al ESP32: Usuario ${assignment.user_id} (${assignment.user_name})`);
+    if (thingspeakAssignment) {
+      console.log('✅ Encontrada asignación ThingSpeak:', thingspeakAssignment.user_name);
       
-//       // RESPUESTA EN FORMATO QUE EL ESP32 PUEDE PARSEAR
-//       res.json({
-//         assigned: true,
-//         user_id: assignment.user_id,
-//         user_name: assignment.user_name,
-//         device_id: assignment.device_id || 'esp32_default'
-//       });
+      res.json({
+        success: true,
+        assigned: true,
+        user_id: thingspeakAssignment.user_id,
+        user_name: thingspeakAssignment.user_name,
+        device_id: thingspeakAssignment.device_id || 'esp32_default',
+        assigned_at: thingspeakAssignment.assigned_at,
+        connection_type: thingspeakAssignment.connection_type
+      });
+    } else {
+      console.log('❌ No hay usuario asignado');
       
-//     } else {
-//       console.log('❌ No hay usuario asignado para ESP32');
-      
-//       // RESPUESTA VACÍA PARA ESP32
-//       res.json({
-//         assigned: false,
-//         user_id: null,
-//         user_name: null
-//       });
-//     }
+      res.json({
+        success: true,
+        assigned: false,
+        user_id: null,
+        user_name: null
+      });
+    }
     
-//   } catch (error) {
-//     console.error('❌ Error en endpoint ESP32:', error);
-//     res.status(500).json({
-//       assigned: false,
-//       error: 'Error interno'
-//     });
-//   }
-// });
+  } catch (error) {
+    console.error('❌ Error verificando asignación:', error);
+    res.status(500).json({
+      success: false,
+      assigned: false,
+      error: error.message
+    });
+  }
+});
 app.post('/api/iot/pedometer/release-assignment', async (req, res) => {
   try {
     const { user_id } = req.body;
