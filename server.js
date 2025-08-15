@@ -6599,19 +6599,20 @@ app.post('/api/cliente/calorias', async (req, res) => {
       const [results] = await connection.execute(
         `SELECT DATE(com.fecha) AS dia, AVG(com.calorias_totales) AS calorias
 FROM comidas_registradas com
-INNER JOIN clientes c 
-    ON com.id_cli = c.id_cli
-INNER JOIN dietas d 
-    ON com.id_cli = d.id_cli 
-    AND com.fecha BETWEEN d.fecha_inicio AND d.fecha_fin
-WHERE com.id_cli = ? 
+INNER JOIN clientes c ON com.id_cli = c.id_cli
+LEFT JOIN dietas d ON com.id_cli = d.id_cli AND d.activo = 1
+WHERE com.id_cli = ?
   AND c.id_nut = ?
+  AND (
+    com.fecha BETWEEN d.fecha_inicio AND d.fecha_fin
+    OR com.fecha >= CURDATE()  -- Incluir registros de hoy
+  )
 GROUP BY DATE(com.fecha)
 ORDER BY dia ASC;
 `,
         [idCliente, idNutriologo]
       );
-
+ console.log('📊 Datos de calorías encontrados:', results.length, 'registros');
       res.json(results);
     } finally {
       await connection.end();
@@ -6634,7 +6635,11 @@ app.get('/api/cliente-objetivo/:id', async (req, res) => {
     
     try {
       const [results] = await connection.execute(
-        `SELECT objetivo_dieta FROM dietas WHERE id_cli = ? AND activo = 1 LIMIT 1`,
+        `SELECT objetivo_dieta, calorias_objetivo 
+         FROM dietas 
+         WHERE id_cli = ? AND activo = 1 
+         ORDER BY fecha_inicio DESC 
+         LIMIT 1`,
         [clienteId]
       );
 
