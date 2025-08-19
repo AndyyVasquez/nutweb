@@ -1430,6 +1430,59 @@ module.exports = {
   startAutoSync
 };
 
+// NUEVA RUTA: Obtener alimentos de una dieta (con sus tiempos de comida)
+app.get('/api/dieta-alimentos/:id_dieta', async (req, res) => {
+  const { id_dieta } = req.params;
+
+  if (!id_dieta || isNaN(id_dieta)) {
+    return res.status(400).json({
+      success: false,
+      message: 'ID de dieta inválido'
+    });
+  }
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(dbConfig);
+
+    const query = `
+      SELECT 
+        d.id_dieta,
+        d.nombre_dieta,
+        t.id_tiempo,
+        t.nombre_tiempo,
+        a.id_alimento_dieta,
+        a.nombre_alimento,
+        a.cantidad_gramos,
+        a.calorias,
+        a.grupo_alimenticio
+      FROM dietas d
+      INNER JOIN tiempos_comida t 
+        ON d.id_dieta = t.id_dieta
+      INNER JOIN alimentos_dieta a 
+        ON t.id_tiempo = a.id_tiempo
+      WHERE d.id_dieta = ?
+      ORDER BY t.id_tiempo, a.id_alimento_dieta
+    `;
+
+    const [rows] = await connection.execute(query, [id_dieta]);
+
+    res.json({
+      success: true,
+      data: rows
+    });
+
+  } catch (error) {
+    console.error('❌ Error al obtener alimentos de la dieta:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor al obtener alimentos'
+    });
+  } finally {
+    if (connection) await connection.end();
+  }
+});
+
 // POST para obtener la dieta actual del cliente
 app.post('/api/dieta-actual', async (req, res) => {
   const { idCliente } = req.body;
